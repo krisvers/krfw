@@ -1,3 +1,7 @@
+#pragma once
+
+#include "SDL3/SDL_vulkan.h"
+#include "krfw.h"
 #include "vulkan/vulkan_core.h"
 #include <iostream>
 #include <format>
@@ -7,22 +11,67 @@
 #include <sstream>
 #include <functional>
 
-#define VK_ONLY_EXPORTED_PROTOTYPES
 #include <SDL3/SDL.h>
+
+#ifdef KRFW_VULKAN
+
+namespace krfw {
+
+namespace vkf {
+
+#define KRFW_VULKAN_LOADER_GLOBAL_FUNCTIONS_DECLARE
+
+#define KRFW_VULKAN_LOADER_INSTANCE_FUNCTIONS_DECLARE
+#define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_FUNCTIONS_DECLARE
+#define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_KHR
+#define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_KHR_SURFACE
+#define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_EXT
+#define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_EXT_DEBUG_UTILS
+#define KRFW_VULKAN_LOADER_INSTANCE_STRUCTURE_TYPE_NAME InstanceFunctions
+
+#define KRFW_VULKAN_LOADER_DEVICE_FUNCTIONS_DECLARE
+#define KRFW_VULKAN_LOADER_DEVICE_EXTENSION_FUNCTIONS_DECLARE
+#define KRFW_VULKAN_LOADER_DEVICE_EXTENSION_KHR
+#define KRFW_VULKAN_LOADER_DEVICE_EXTENSION_KHR_SWAPCHAIN
+#define KRFW_VULKAN_LOADER_DEVICE_EXTENSION_KHR_DYNAMIC_RENDERING
+#define KRFW_VULKAN_LOADER_DEVICE_STRUCTURE_TYPE_NAME DeviceFunctions
+#include "krfw_vulkan_loader.h"
+
+}
+
+}
+
+#define VK_ONLY_EXPORTED_PROTOTYPES
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
 
 #include "kvk.h"
+#endif
 
 #ifdef KRFW_IMGUI
 #include "imgui.h"
+
+#ifdef KRFW_VULKAN
 #include "imgui_impl_vulkan.h"
+#endif
 #endif
 
 #define KRFW_ERR(msg_) throw std::runtime_error(msg_)
 #define KRFW_VK_ERR(vkresult_, msg_) if (vkresult_ != VK_SUCCESS) { KRFW_ERR(msg_); }
 
 namespace krfw {
+
+namespace vk {
+
+struct Instance {
+    VkInstance instance;
+    vkf::InstanceFunctions functions;
+};
+
+struct Device {
+    VkDevice device;
+    vkf::DeviceFunctions functions;
+};
 
 struct Queue {
     VkQueue queue = {};
@@ -37,7 +86,7 @@ struct Queue {
 
 class FencePool {
 private:
-    VkDevice _device = {};
+    Device const* _device;
 
     std::vector<uint32_t> _unusedFences;
     std::vector<VkFence> _fences;
@@ -50,16 +99,16 @@ private:
         }
 
         if (!_fences.empty()) {
-            vkWaitForFences(_device, static_cast<uint32_t>(_fences.size()), _fences.data(), true, std::numeric_limits<uint64_t>::max());
+            _device->functions.WaitForFences(_device->device, static_cast<uint32_t>(_fences.size()), _fences.data(), true, std::numeric_limits<uint64_t>::max());
 
             for (uint32_t i = 0; i < _fences.size(); ++i) {
-                vkDestroyFence(_device, _fences[i], nullptr);
+                _device->functions.DestroyFence(_device->device, _fences[i], nullptr);
             }
         }
     }
 
 public:
-    FencePool(VkDevice device) : _device(device) {}
+    FencePool(Device const* device) : _device(device) {}
 
     VkFence acquireFence(bool signaled) {
         if (_device == nullptr) {
@@ -72,7 +121,7 @@ public:
         };
 
         VkFence fence;
-        KRFW_VK_ERR(vkCreateFence(_device, &ci, nullptr, &fence), "Failed to create VkFence");
+        KRFW_VK_ERR(_device->functions.CreateFence(_device->device, &ci, nullptr, &fence), "Failed to create VkFence");
 
         _fences.push_back(fence);
         return fence;
@@ -99,7 +148,7 @@ public:
 
 class SemaphorePool {
 private:
-    VkDevice _device = {};
+    Device const* _device;
 
     std::vector<uint32_t> _unusedSemaphores;
     std::vector<VkSemaphore> _semaphores;
@@ -111,14 +160,14 @@ private:
             return;
         }
 
-        vkDeviceWaitIdle(_device);
+        _device->functions.DeviceWaitIdle(_device->device);
         for (uint32_t i = 0; i < _semaphores.size(); ++i) {
-            vkDestroySemaphore(_device, _semaphores[i], nullptr);
+            _device->functions.DestroySemaphore(_device->device, _semaphores[i], nullptr);
         }
     }
 
 public:
-    SemaphorePool(VkDevice device) : _device(device) {}
+    SemaphorePool(Device const* device) : _device(device) {}
 
     VkSemaphore acquireSemaphore() {
         if (_device == nullptr) {
@@ -130,7 +179,7 @@ public:
         };
 
         VkSemaphore semaphore;
-        KRFW_VK_ERR(vkCreateSemaphore(_device, &ci, nullptr, &semaphore), "Failed to create VkSemaphore");
+        KRFW_VK_ERR(_device->functions.CreateSemaphore(_device->device, &ci, nullptr, &semaphore), "Failed to create VkSemaphore");
 
         _semaphores.push_back(semaphore);
         return semaphore;
@@ -162,7 +211,7 @@ struct SubmitInfoWait {
 
 class CommandPool {
 private:
-    VkDevice _device = {};
+    Device const* _device;
     VkCommandPool _commandPool = {};
 
     Queue* _queue;
@@ -178,12 +227,12 @@ private:
             return;
         }
 
-        vkQueueWaitIdle(_queue->queue);
-        vkDestroyCommandPool(_device, _commandPool, nullptr);
+        _device->functions.QueueWaitIdle(_queue->queue);
+        _device->functions.DestroyCommandPool(_device->device, _commandPool, nullptr);
     }
 
 public:
-    CommandPool(VkDevice device, Queue& queue, FencePool& fencePool) : _device(device), _queue(&queue), _fencePool(&fencePool) {
+    CommandPool(Device const* device, Queue& queue, FencePool& fencePool) : _device(device), _queue(&queue), _fencePool(&fencePool) {
         if (_device == nullptr) {
             return;
         }
@@ -194,7 +243,7 @@ public:
             .queueFamilyIndex = queue.familyIndex,
         };
 
-        KRFW_VK_ERR(vkCreateCommandPool(_device, &ci, nullptr, &_commandPool), "Failed to create VkCommandPool for command grouping");
+        KRFW_VK_ERR(_device->functions.CreateCommandPool(_device->device, &ci, nullptr, &_commandPool), "Failed to create VkCommandPool for command grouping");
     }
 
     VkCommandBuffer acquireCommandBuffer() {
@@ -215,7 +264,7 @@ public:
                 .commandBufferCount = 1,
             };
 
-            KRFW_VK_ERR(vkAllocateCommandBuffers(_device, &ai, &commandBuffer), "Failed to allocate new VkCommandBuffer");
+            KRFW_VK_ERR(_device->functions.AllocateCommandBuffers(_device->device, &ai, &commandBuffer), "Failed to allocate new VkCommandBuffer");
             _commandBuffers.push_back(commandBuffer);
         }
 
@@ -238,7 +287,7 @@ public:
             KRFW_ERR("Provided command buffer is not a child of this CommandPool");
         }
 
-        vkResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+        _device->functions.ResetCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
         _unusedCommandBuffers.push_back(index);
     }
 
@@ -278,7 +327,7 @@ public:
             .pSignalSemaphores = signals.data(),
         };
 
-        KRFW_VK_ERR(vkQueueSubmit(_queue->queue, 1, &si, fence), "Failed to submit VkQueue");
+        KRFW_VK_ERR(_device->functions.QueueSubmit(_queue->queue, 1, &si, fence), "Failed to submit VkQueue");
         return fence;
     }
 
@@ -315,7 +364,7 @@ private:
     VkSurfaceKHR _surface = {};
     bool _preferImmediate;
 
-    VkDevice _device = {};
+    Device const* _device;
     VkSwapchainKHR _swapchain = {};
     kvk::SwapchainPreference _swapchainPreference;
     VkExtent2D _lastKnownExtent;
@@ -334,6 +383,10 @@ public:
     BackbufferPool(FencePool& fencePool, SemaphorePool& semaphorePool, VkSurfaceKHR surface, bool preferImmediate) : _surface(surface), _preferImmediate(preferImmediate), _fencePool(&fencePool), _semaphorePool(&semaphorePool) {}
 
     Backbuffer acquireBackbuffer() {
+        if (_device == nullptr) {
+            KRFW_ERR("Attempting to acquire backbuffer from uninitialized BackbufferPool");
+        }
+
         Backbuffer backbuffer = {};
         if (_fencePool != &FencePool::invalid()) {
             backbuffer.fence = _fencePool->acquireFence(false);
@@ -343,10 +396,9 @@ public:
             backbuffer.semaphore = _semaphorePool->acquireSemaphore();
         }
 
-        PFN_vkAcquireNextImageKHR vkAcquireNextImageKHR = reinterpret_cast<PFN_vkAcquireNextImageKHR>(vkGetDeviceProcAddr(_device, "vkAcquireNextImageKHR"));
-        VkResult result = vkAcquireNextImageKHR(_device, _swapchain, std::numeric_limits<uint64_t>::max(), backbuffer.semaphore, backbuffer.fence, &backbuffer.index);
+        VkResult result = _device->functions.khr.swapchain.AcquireNextImage(_device->device, _swapchain, std::numeric_limits<uint64_t>::max(), backbuffer.semaphore, backbuffer.fence, &backbuffer.index);
         if (result != VK_SUCCESS) {
-            throw std::runtime_error("Failed to acquire next image for BackbuferPool");
+            KRFW_ERR("Failed to acquire next image for BackbuferPool");
         }
 
         backbuffer.image = _backbuffers[backbuffer.index];
@@ -369,8 +421,8 @@ public:
 };
 
 struct RenderPoolPacket {
-    VkInstance instance;
-    VkDevice device;
+    Instance const& instance;
+    Device const& device;
     VkPhysicalDevice physicalDevice;
 
     FencePool& fencePool;
@@ -395,11 +447,16 @@ public:
 
 class Renderer {
 private:
-    bool _debug;
+    static inline bool _loadedGlobalFunctionPointers = false;
 
-    VkInstance _instance = {};
+    bool _debug = false;
+
+    bool _loadedInstanceFunctionPointers = false;
+    Instance _instance = {};
     VkPhysicalDevice _physicalDevice = {};
-    VkDevice _device = {};
+    
+    bool _loadedDeviceFunctionPointers = false;
+    Device _device = {};
 
     FencePool _fencePool;
     SemaphorePool _semaphorePool;
@@ -408,6 +465,55 @@ private:
     CommandPool _graphicsCommandPool;
 
     std::vector<IRenderPool*> _renderPools;
+
+    void _loadFunctionPointers() {
+        if (!_loadedGlobalFunctionPointers) {
+            /* TODO: migrate away from SDL3 dependence */
+            if (!SDL_Vulkan_LoadLibrary(nullptr)) {
+                KRFW_ERR("Failed to use SDL3 to load Vulkan");
+            }
+
+            ::krfw::vkf::GetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_Vulkan_GetVkGetInstanceProcAddr());
+            if (::krfw::vkf::GetInstanceProcAddr == nullptr) {
+                KRFW_ERR("Failed to load vkGetInstanceProcAddr using SDL3");
+            }
+
+            #define KRFW_VULKAN_LOADER_SCOPE ::krfw::vkf
+            #define KRFW_VULKAN_LOADER_GLOBAL_FUNCTIONS_LOAD
+            #include "krfw_vulkan_loader.h"
+            _loadedGlobalFunctionPointers = true;
+        }
+
+        if (_instance.instance != nullptr && !_loadedInstanceFunctionPointers) {
+            #define KRFW_VULKAN_LOADER_SCOPE ::krfw::vkf
+            #define KRFW_VULKAN_LOADER_INSTANCE_FUNCTIONS_LOAD
+            #define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_FUNCTIONS_LOAD
+            #define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_KHR
+            #define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_KHR_SURFACE
+            #define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_EXT
+            #define KRFW_VULKAN_LOADER_INSTANCE_EXTENSION_EXT_DEBUG_UTILS
+            #define KRFW_VULKAN_LOADER_INSTANCE _instance.instance
+            #define KRFW_VULKAN_LOADER_INSTANCE_STRUCTURE _instance.functions
+            #define KRFW_VULKAN_LOADER_INSTANCE_STRUCTURE_TYPE_NAME InstanceFunctions
+            #include "krfw_vulkan_loader.h"
+            _loadedInstanceFunctionPointers = true;
+        }
+
+        if (_device.device != VK_NULL_HANDLE && !_loadedDeviceFunctionPointers) {
+            #define KRFW_VULKAN_LOADER_SCOPE ::krfw::vkf
+            #define KRFW_VULKAN_LOADER_DEVICE_FUNCTIONS_LOAD
+            #define KRFW_VULKAN_LOADER_DEVICE_EXTENSION_FUNCTIONS_LOAD
+            #define KRFW_VULKAN_LOADER_DEVICE_EXTENSION_KHR
+            #define KRFW_VULKAN_LOADER_DEVICE_EXTENSION_KHR_SWAPCHAIN
+            #define KRFW_VULKAN_LOADER_DEVICE_EXTENSION_KHR_DYNAMIC_RENDERING
+            #define KRFW_VULKAN_LOADER_INSTANCE_STRUCTURE _instance.functions
+            #define KRFW_VULKAN_LOADER_DEVICE _device.device
+            #define KRFW_VULKAN_LOADER_DEVICE_STRUCTURE _device.functions
+            #define KRFW_VULKAN_LOADER_DEVICE_STRUCTURE_TYPE_NAME DeviceFunctions
+            #include "krfw_vulkan_loader.h"
+            _loadedDeviceFunctionPointers = true;
+        }
+    }
 
     void _initInstance() {
         KRFW_VK_ERR(
@@ -463,14 +569,16 @@ private:
                         return false;
                     },
                 }
-            }, _instance),
+            }, _instance.instance),
             "Failed to create VkInstance using kvk"
         );
+
+        _loadFunctionPointers();
     }
 
     void _cleanupInstance() {
-        if (_instance != VK_NULL_HANDLE) {
-            vkDestroyInstance(_instance, nullptr);
+        if (_instance.instance != VK_NULL_HANDLE) {
+            _instance.functions.DestroyInstance(_instance.instance, nullptr);
         }
     }
 
@@ -493,7 +601,7 @@ private:
         }
 
         std::vector<kvk::DeviceQueueReturn> deviceQueueReturns;
-        KRFW_VK_ERR(kvk::create_device(_instance, {
+        KRFW_VK_ERR(kvk::create_device(_instance.instance, {
             .vk_pnext = &vk12Features,
             .vk_extensions = { VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME },
             .physical_device_query = {
@@ -550,7 +658,8 @@ private:
                 .enable_dynamic_rendering = true,
                 .enable_maintenance1 = true,
             },
-        }, _physicalDevice, _device, deviceQueueReturns), "Failed to create VkDevice using kvk");
+        }, _physicalDevice, _device.device, deviceQueueReturns), "Failed to create VkDevice using kvk");
+        _loadFunctionPointers();
 
         _graphicsQueue = {
             .queue = deviceQueueReturns[0].vk_queue,
@@ -560,8 +669,8 @@ private:
     }
 
     void _cleanupDevice() {
-        if (_device != VK_NULL_HANDLE) {
-            vkDestroyDevice(_device, nullptr);
+        if (_device.device != VK_NULL_HANDLE) {
+            _device.functions.DestroyDevice(_device.device, nullptr);
         }
     }
 
@@ -571,17 +680,15 @@ private:
         for (auto const& p : _backbufferPools) {
             for (uint32_t i = 0; i < p.second._swapchainPreference.image_count; ++i) {
                 if (p.second._backbufferViews[i] != VK_NULL_HANDLE) {
-                    vkDestroyImageView(_device, p.second._backbufferViews[i], nullptr);
+                    _device.functions.DestroyImageView(_device.device, p.second._backbufferViews[i], nullptr);
                 }
             }
 
             if (p.second._swapchain != VK_NULL_HANDLE) {
-                PFN_vkDestroySwapchainKHR vkDestroySwapchainKHR = reinterpret_cast<PFN_vkDestroySwapchainKHR>(vkGetDeviceProcAddr(_device, "vkDestroySwapchainKHR"));
-                vkDestroySwapchainKHR(_device, p.second._swapchain, nullptr);
+                _device.functions.khr.swapchain.DestroySwapchain(_device.device, p.second._swapchain, nullptr);
             }
 
-            PFN_vkDestroySurfaceKHR vkDestroySurfaceKHR = reinterpret_cast<PFN_vkDestroySurfaceKHR>(vkGetInstanceProcAddr(_instance, "vkDestroySurfaceKHR"));
-            vkDestroySurfaceKHR(_instance, p.second._surface, nullptr);
+            _instance.functions.khr.surface.DestroySurface(_instance.instance, p.second._surface, nullptr);
         }
     }
 
@@ -722,7 +829,7 @@ private:
                 .vk_backbuffers = backbufferPool._backbuffers,
             };
 
-            KRFW_VK_ERR(kvk::create_swapchain(_device, 
+            KRFW_VK_ERR(kvk::create_swapchain(_device.device, 
                 {
                     .vk_physical_device = _physicalDevice,
                     .vk_surface = backbufferPool._surface,
@@ -741,7 +848,7 @@ private:
                 swapchainReturns
             ), "Failed to create VkSwapchainKHR using kvk");
 
-            backbufferPool._device = _device;
+            backbufferPool._device = &_device;
             backbufferPool._swapchain = swapchainReturns.vk_swapchain;
             backbufferPool._swapchainPreference = swapchainPreferences[swapchainReturns.chosen_preference];
             backbufferPool._lastKnownExtent = swapchainReturns.vk_current_extent;
@@ -768,13 +875,14 @@ private:
                     }
                 };
 
-                KRFW_VK_ERR(vkCreateImageView(_device, &viewCI, nullptr, &backbufferPool._backbufferViews[i]), "Failed to create image view for backbuffer");
+                KRFW_VK_ERR(_device.functions.CreateImageView(_device.device, &viewCI, nullptr, &backbufferPool._backbufferViews[i]), "Failed to create image view for backbuffer");
             }
         }
     }
 
 public:
     Renderer(bool debug = false) : _debug(debug), _fencePool(FencePool::invalid()), _semaphorePool(SemaphorePool::invalid()), _graphicsCommandPool(CommandPool::invalid()) {
+        _loadFunctionPointers();
         _initInstance();
     }
 
@@ -784,13 +892,12 @@ public:
         }
 
         VkSurfaceKHR surface;
-        if (!SDL_Vulkan_CreateSurface(window, _instance, nullptr, &surface)) {
+        if (!SDL_Vulkan_CreateSurface(window, _instance.instance, nullptr, &surface)) {
             KRFW_ERR("Failed to create VkSurfaceKHR using SDL3");
         }
 
         _backbufferPools[window] = BackbufferPool(FencePool::invalid(), SemaphorePool::invalid(), surface, preferImmediate);
-
-        if (_device != VK_NULL_HANDLE) {
+        if (_device.device != VK_NULL_HANDLE) {
             _finishInitWSI();
         }
     }
@@ -798,9 +905,9 @@ public:
     void stage2() {
         _initDevice();
 
-        _fencePool = FencePool(_device);
-        _semaphorePool = SemaphorePool(_device);
-        _graphicsCommandPool = CommandPool(_device, _graphicsQueue, _fencePool);
+        _fencePool = FencePool(&_device);
+        _semaphorePool = SemaphorePool(&_device);
+        _graphicsCommandPool = CommandPool(&_device, _graphicsQueue, _fencePool);
 
         _finishInitWSI();
     }
@@ -815,7 +922,7 @@ public:
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         };
 
-        KRFW_VK_ERR(vkBeginCommandBuffer(commandBuffer, &commandBufferBI), "Failed to begin command buffer");
+        KRFW_VK_ERR(_device.functions.BeginCommandBuffer(commandBuffer, &commandBufferBI), "Failed to begin command buffer");
 
         BackbufferPool* backbufferPool = {};
         Backbuffer backbuffer = {};
@@ -842,7 +949,6 @@ public:
             };
 
             backbufferPacket.backbuffer = backbuffer;
-
             if (pool->requiresBackbuffer() && window != nullptr) {
                 if (backbufferPool == nullptr) {
                     backbufferPool = &_backbufferPools[window];
@@ -884,7 +990,7 @@ public:
                 },
             };
 
-            vkCmdPipelineBarrier(commandBuffer,
+            _device.functions.CmdPipelineBarrier(commandBuffer,
                 backbufferPacket.lastStage, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
                 0, nullptr,
                 0, nullptr,
@@ -892,7 +998,7 @@ public:
             );
         }
 
-        KRFW_VK_ERR(vkEndCommandBuffer(commandBuffer), "Failed to end command buffer");
+        KRFW_VK_ERR(_device.functions.EndCommandBuffer(commandBuffer), "Failed to end command buffer");
 
         VkSemaphore backbufferFinishedSemaphore = {};
         if (backbufferPool != nullptr) {
@@ -929,13 +1035,12 @@ public:
                 .pResults = nullptr,
             };
 
-            PFN_vkQueuePresentKHR vkQueuePresentKHR = reinterpret_cast<PFN_vkQueuePresentKHR>(vkGetDeviceProcAddr(_device, "vkQueuePresentKHR"));
-            KRFW_VK_ERR(vkQueuePresentKHR(_graphicsQueue.queue, &pi), "Failed to present backbuffer");
+            KRFW_VK_ERR(_device.functions.khr.swapchain.QueuePresent(_graphicsQueue.queue, &pi), "Failed to present backbuffer");
             waitFences.push_back(presentationFinishedFence);
         }
 
-        vkWaitForFences(_device, static_cast<uint32_t>(waitFences.size()), waitFences.data(), true, std::numeric_limits<uint64_t>::max());
-        vkResetFences(_device, static_cast<uint32_t>(waitFences.size()), &waitFences[0]);
+        _device.functions.WaitForFences(_device.device, static_cast<uint32_t>(waitFences.size()), waitFences.data(), true, std::numeric_limits<uint64_t>::max());
+        _device.functions.ResetFences(_device.device, static_cast<uint32_t>(waitFences.size()), &waitFences[0]);
 
         _graphicsCommandPool.releaseCommandBuffer(commandBuffer);
         _graphicsCommandPool.releaseSubmitFence(submissionFence);
@@ -951,9 +1056,9 @@ public:
         BackbufferPool& chosenPool = _backbufferPools[window];
         return ImGui_ImplVulkan_InitInfo {
             .ApiVersion = VK_MAKE_API_VERSION(0, 1, 2, 197),
-            .Instance = _instance,
+            .Instance = _instance.instance,
             .PhysicalDevice = _physicalDevice,
-            .Device = _device,
+            .Device = _device.device,
             .QueueFamily = _graphicsQueue.familyIndex,
             .Queue = _graphicsQueue.queue,
             .DescriptorPool = {},
@@ -980,8 +1085,8 @@ public:
     #endif
 
     ~Renderer() {
-        if (_device != VK_NULL_HANDLE) {
-            vkDeviceWaitIdle(_device);
+        if (_device.device != VK_NULL_HANDLE) {
+            _device.functions.DeviceWaitIdle(_device.device);
         }
 
         _graphicsCommandPool.destroy();
@@ -995,5 +1100,7 @@ public:
         _cleanupInstance();
     }
 };
+
+}
 
 }

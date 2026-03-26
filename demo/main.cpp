@@ -8,15 +8,16 @@
 #include "imgui_impl_vulkan.h"
 
 #define KRFW_IMGUI
+#define KRFW_VULKAN
 #include <krfw.h>
 
-class ImGuiRenderPool : public krfw::IRenderPool {
+class ImGuiRenderPool : public krfw::vk::IRenderPool {
 public:
     bool requiresBackbuffer() override {
         return true;
     }
 
-    bool execute(krfw::RenderPoolPacket const& packet, krfw::RenderPoolBackbufferPacket* backbufferPacket, std::vector<krfw::SubmitInfoWait>& waits, std::vector<VkSemaphore>& signals) override {
+    bool execute(krfw::vk::RenderPoolPacket const& packet, krfw::vk::RenderPoolBackbufferPacket* backbufferPacket, std::vector<krfw::vk::SubmitInfoWait>& waits, std::vector<VkSemaphore>& signals) override {
         VkImageMemoryBarrier backbufferToColorAttachmentBarrier = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .srcAccessMask = {},
@@ -35,7 +36,7 @@ public:
             },
         };
 
-        vkCmdPipelineBarrier(packet.commandBuffer,
+        packet.device.functions.CmdPipelineBarrier(packet.commandBuffer,
             backbufferPacket->lastStage,
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, {},
             0, nullptr,
@@ -44,9 +45,6 @@ public:
         );
 
         backbufferPacket->lastStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-
-        PFN_vkCmdBeginRenderingKHR vkCmdBeginRenderingKHR = reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(vkGetInstanceProcAddr(packet.instance, "vkCmdBeginRenderingKHR"));
-        PFN_vkCmdEndRenderingKHR vkCmdEndRenderingKHR = reinterpret_cast<PFN_vkCmdEndRenderingKHR>(vkGetInstanceProcAddr(packet.instance, "vkCmdEndRenderingKHR"));
 
         VkRenderingAttachmentInfoKHR backbufferCAI = {
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
@@ -76,9 +74,9 @@ public:
             .pColorAttachments = &backbufferCAI,
         };
 
-        vkCmdBeginRenderingKHR(packet.commandBuffer, &ri);
+        packet.device.functions.khr.dynamic_rendering.CmdBeginRendering(packet.commandBuffer, &ri);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), packet.commandBuffer, VK_NULL_HANDLE);
-        vkCmdEndRenderingKHR(packet.commandBuffer);
+        packet.device.functions.khr.dynamic_rendering.CmdEndRendering(packet.commandBuffer);
         return true;
     }
 };
@@ -93,7 +91,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    krfw::Renderer renderer = krfw::Renderer(true);
+    krfw::vk::Renderer renderer = krfw::vk::Renderer(true);
     renderer.initWSI(window, false);
     renderer.stage2();
 
@@ -142,7 +140,7 @@ int main(int argc, char** argv) {
 
         ImGui::Render();
 
-        std::vector<krfw::IRenderPool*> renderPools = { &imguiRenderPool };
+        std::vector<krfw::vk::IRenderPool*> renderPools = { &imguiRenderPool };
         renderer.executeRenderPools(renderPools, window);
     }
 

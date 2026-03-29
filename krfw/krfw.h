@@ -1,8 +1,39 @@
 #pragma once
 
-#include "SDL3/SDL_vulkan.h"
+#ifndef KRFW_NO_PLATFORM_AUTO_DETECTION
+    #ifdef _WIN32
+        #define KRFW_PLATFORM_FAMILY_WINDOWS
+        #ifdef _WIN64
+            #define KRFW_PLATFORM_WINDOWS_X64
+        #else
+            #define KRFW_PLATFORM_WINDOWS_X86
+        #endif
+    #elif defined(__APPLE__) || defined(__MACH__)
+        #define KRFW_PLATFORM_FAMILY_APPLE
+        #define KRFW_PLATFORM_FAMILY_UNIX
+        #include <TargetConditionals.h>
+
+        #ifdef TARGET_OS_IOS
+            #define KRFW_PLATFORM_APPLE_IOS
+        #elif defined(TARGET_OS_MAC)
+            #define KRFW_PLATFORM_APPLE_MACOS
+        #elif defined(TARGET_OS_SIMULATOR)
+            #define KRFW_PLATFORM_APPLE_IOS
+            #define KRFW_PLATFORM_APPLE_IOS_SIMULATOR
+        #endif
+    #elif defined(__ANDROID__)
+        #define KRFW_PLATFORM_FAMILY_UNIX
+        #define KRFW_PLATFORM_ANDROID
+    #elif defined(__linux__)
+        #define KRFW_PLATFORM_FAMILY_UNIX
+        #define KRFW_PLATFORM_LINUX
+    #elif defined(__FreeBSD__)
+        #define KRFW_PLATFORM_FAMILY_UNIX
+        #define KRFW_PLATFORM_FREE_BSD
+    #endif
+#endif
+
 #include "krfw.h"
-#include "vulkan/vulkan_core.h"
 #include <iostream>
 #include <format>
 #include <limits>
@@ -14,6 +45,8 @@
 #include <SDL3/SDL.h>
 
 #ifdef KRFW_VULKAN
+
+#include "vulkan/vulkan_core.h"
 
 namespace krfw {
 
@@ -445,6 +478,41 @@ public:
     virtual bool execute(RenderPoolPacket const& packet, RenderPoolBackbufferPacket* backbufferPacket, std::vector<SubmitInfoWait>& waits, std::vector<VkSemaphore>& signals) = 0;
 };
 
+enum class WindowType {
+    Windows,
+    Xorg,
+    Wayland,
+    Metal,
+};
+
+#ifdef KRFW_PLATFORM_FAMILY_WINDOWS
+struct Window_Windows {
+    void* hwnd;
+};
+#elif defined(KRFW_PLATFORM_LINUX) || defined(KRFW_PLATFORM_FREE_BSD)
+struct Window_Xorg {
+
+};
+
+#ifdef KRFW_PLATFORM_LINUX
+struct Window_Wayland {
+
+};
+#endif
+#elif defined(KRFW_PLATFORM_FAMILY_APPLE)
+struct Window_Metal {
+    
+};
+#endif
+
+class Window {
+private:
+
+
+public:
+
+};
+
 class Renderer {
 private:
     static inline bool _loadedGlobalFunctionPointers = false;
@@ -674,7 +742,7 @@ private:
         }
     }
 
-    std::unordered_map<SDL_Window*, BackbufferPool> _backbufferPools;
+    std::unordered_map<Window, BackbufferPool> _backbufferPools;
 
     void _cleanupWSI() {
         for (auto const& p : _backbufferPools) {

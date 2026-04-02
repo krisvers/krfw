@@ -33,7 +33,6 @@
     #endif
 #endif
 
-#include "krfw.h"
 #include <iostream>
 #include <format>
 #include <limits>
@@ -42,11 +41,49 @@
 #include <sstream>
 #include <functional>
 
-#include <SDL3/SDL.h>
-
 #ifdef KRFW_VULKAN
+#ifdef KRFW_WINDOW_WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <Windows.h>
+    #undef WIN32_LEAN_AND_MEAN
+    #undef NOMINMAX
+    #include <vulkan/vulkan_win32.h>
+#endif
 
-#include "vulkan/vulkan_core.h"
+#ifdef KRFW_WINDOW_XLIB
+    #include <X11/Xlib.h>
+    #include <vulkan/vulkan_xlib.h>
+#endif
+
+#ifdef KRFW_WINDOW_XCB
+    #include <xcb/xcb.h>
+    #include <vulkan/vulkan_xcb.h>
+#endif
+
+#ifdef KRFW_WINDOW_WAYLAND
+    #include <wayland-client.h>
+    #include <vulkan/vulkan_wayland.h>
+#endif
+
+#ifdef KRFW_WINDOW_METAL
+    #ifdef __OBJC__
+        #import <QuartzCore/QuartzCore.h>
+    #elif !defined(KRFW_WINDOW_METAL_NO_DEFINE_CAMETALLAYER)
+        using CAMetalLayer = void;
+    #endif
+    #include <vulkan/vulkan_metal.h>
+#endif
+
+#ifdef KRFW_WINDOW_ANDROID
+    #include <android/native_window.h>
+    #include <vulkan/vulkan_android.h>
+#endif
+
+#ifdef KRFW_WINDOW_SDL3
+    #include <SDL/SDL3.h>
+    #include <SDL/SDL3_vulkan.h>
+#endif
 
 namespace krfw {
 
@@ -75,18 +112,15 @@ namespace vkf {
 }
 
 #define VK_ONLY_EXPORTED_PROTOTYPES
-#include <SDL3/SDL_vulkan.h>
-#include <vulkan/vulkan.h>
+#include <vulkan/vk_platform.h>
+#include <vulkan/vulkan_core.h>
 
 #include "kvk.h"
 #endif
 
 #ifdef KRFW_IMGUI
 #include "imgui.h"
-
-#ifdef KRFW_VULKAN
 #include "imgui_impl_vulkan.h"
-#endif
 #endif
 
 #define KRFW_ERR(msg_) throw std::runtime_error(msg_)
@@ -479,38 +513,141 @@ public:
 };
 
 enum class WindowType {
-    Windows,
-    Xorg,
+    Win32,
+    Xlib,
+    Xcb,
     Wayland,
     Metal,
+    Android,
+
+    SDL3,
 };
 
 #ifdef KRFW_PLATFORM_FAMILY_WINDOWS
-struct Window_Windows {
+struct Window_Win32 {
+    void* hinstance;
     void* hwnd;
 };
 #elif defined(KRFW_PLATFORM_LINUX) || defined(KRFW_PLATFORM_FREE_BSD)
-struct Window_Xorg {
-
+struct Window_Xlib {
+    void* display;
+    uint32_t window;
 };
 
-#ifdef KRFW_PLATFORM_LINUX
+struct Window_Xcb {
+    void* connection;
+    uint32_t window;
+};
+
 struct Window_Wayland {
-
+    void* display;
+    void* surface;
 };
-#endif
 #elif defined(KRFW_PLATFORM_FAMILY_APPLE)
 struct Window_Metal {
-    
+    void* layer;
+};
+#elif defined(KRFW_PLATFORM_ANDROID)
+struct Window_Android {
+    void* window;
+};
+#endif
+
+#ifdef KRFW_WINDOW_SDL3
+struct Window_SDL3 {
+    SDL_Window* window;
 };
 #endif
 
 class Window {
 private:
+    union _WindowHandle {
+#ifdef KRFW_PLATFORM_FAMILY_WINDOWS
+        Window_Win32 win32;
+#elif defined(KRFW_PLATFORM_LINUX) || defined(KRFW_PLATFORM_FREE_BSD)
+        Window_Xlib xlib;
+        Window_Xcb xcb;
+        Window_Wayland wayland;
+#elif defined(KRFW_PLATFORM_FAMILY_APPLE)
+        Window_Metal metal;
+#elif defined(KRFW_PLATFORM_ANDROID)
+        Window_Android android;
+#endif
 
+#ifdef KRFW_WINDOW_SDL3
+        Window_SDL3 sdl3;
+#endif
+    };
+
+    WindowType _type;
+    _WindowHandle _handle;
+
+    friend class Renderer;
+
+    VkSurfaceKHR _createSurface(Instance const& instance) {
+        VkSurfaceKHR surface;
+
+        switch (_type) {
+        #ifdef KRFW_WINDOW_WIN32
+        case WindowType::Win32: {
+            VkWin32SurfaceCreateInfoKHR ci = {
+                .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+                .hinstance = reinterpret_cast<HINSTANCE>(_handle.win32.hinstance),
+                .hwnd = reinterpret_cast<HWND>(_handle.win32.hwnd),
+            };
+
+            KRFW_VK_ERR(instance.functions.khr.surface.CreateWin32Surface(instance.instance, &ci, nullptr, &surface), "Failed to create Win32 surface");
+            break;
+        }
+        #endif
+        #ifdef KRFW_WINDOW_XLIB
+        case WindowType::Xlib: {
+            VkXlibSurfaceCreateInfoKHR ci = {
+                .sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR,
+            };
+        }
+        #endif
+        }
+
+        return surface;
+    }
 
 public:
+#ifdef KRFW_PLATFORM_FAMILY_WINDOWS
+    Window(Window_Win32 windows) : type(WindowType::Win32), _handle(windows) {}
+#ifdef KRFW_WINDOW_WIN32
+    Window(HWND hwnd, HINSTANCE hinstance = GetModuleHandle(nullptr)) : type(WindowType::Win32), _handle(Window_Win32(reinterpret_cast<void*>(hinstance), reinterpret_cast<void*>(hwnd))) {}
+#endif
+#elif defined(KRFW_PLATFORM_LINUX) || defined(KRFW_PLATFORM_FREE_BSD)
+    Window(Window_Xlib xlib) : type(WindowType::Xlib), _handle(xlib) {}
+    Window(Window_Xcb xcb) : type(WindowType::Xcb), _handle(xcb) {}
+    Window(Window_Wayland wayland) : type(WindowType::Wayland), _handle(wayland) {}
+#ifdef KRFW_WINDOW_XLIB
+    Window(Display* display, Window window) : type(WindowType::Xlib), _handle(Window_Xlib(reinterpret_cast<void*>(display), static_cast<uint32_t>(window))) {}
+#endif
 
+#ifdef KRFW_WINDOW_XCB
+    Window(xcb_connection_t* connection, xcb_window_t window) : type(WindowType::Xcb), _handle(Window_Xcb(reinterpret_cast<void*>(connection), static_cast<uint32_t>(window))) {}
+#endif
+
+#ifdef KRFW_WINDOW_WAYLAND
+    Window(wl_display* display, wl_surface* surface) : type(WindowType::Wayland), _handle(Window_Xcb(reinterpret_cast<void*>(display), static_cast<void*>(surface))) {}
+#endif
+#elif defined(KRFW_PLATFORM_FAMILY_APPLE)
+    Window(Window_Metal metal) : type(WindowType::Metal), _handle(metal) {}
+#ifdef KRFW_WINDOW_METAL
+    Window(CAMetalLayer* layer) : type(WindowType::Metal), _handle(Window_Metal(reinterpret_cast<void*>(layer))) {}
+#endif
+#elif defined(KRFW_PLATFORM_ANDROID)
+    Window(Window_Android android) : type(WindowType::Android), _handle(android) {}
+#ifdef KRFW_WINDOW_ANDROID
+    Window(ANativeWindow* window) : type(WindowType::Android), _handle(Window_Android(reinterpret_cast<void*>(window))) {}
+#endif
+#endif
+
+#ifdef KRFW_WINDOW_SDL3
+    Window(SDL_Window* window) : type(WindowType::SDL3), _handle(Window_SDL3(window)) {}
+#endif
 };
 
 class Renderer {

@@ -7,6 +7,7 @@
 
 #define KRFW_IMGUI
 #define KRFW_VULKAN
+#define KRFW_WINDOW_WIN32
 #include <krfw.h>
 
 class ImGuiRenderPool : public krfw::vk::IRenderPool {

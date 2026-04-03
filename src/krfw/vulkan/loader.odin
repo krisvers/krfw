@@ -2,6 +2,43 @@ package krfw_vulkan
 
 import vk "vendor:vulkan"
 
+GlobalFunctionPointers :: struct {
+    getInstanceProcAddr:                    vk.ProcGetInstanceProcAddr,
+    createInstance:                         vk.ProcCreateInstance,
+    enumerateInstanceExtensionProperties:   vk.ProcEnumerateInstanceExtensionProperties,
+    enumerateInstanceLayerProperties:       vk.ProcEnumerateInstanceLayerProperties,
+    enumerateInstanceVersion:               vk.ProcEnumerateInstanceVersion,
+}
+
+loadVulkanGlobalFunctions :: proc "c" (getInstanceProcAddr: vk.ProcGetInstanceProcAddr, functions: ^GlobalFunctionPointers) -> b32 {
+    if getInstanceProcAddr == nil || functions == nil {
+        return false
+    }
+
+    functions.getInstanceProcAddr = getInstanceProcAddr
+    functions.createInstance = vk.ProcCreateInstance(getInstanceProcAddr(nil, "vkCreateInstance"))
+    if functions.createInstance == nil {
+        return false
+    }
+
+    functions.enumerateInstanceExtensionProperties = vk.ProcEnumerateInstanceExtensionProperties(getInstanceProcAddr(nil, "vkEnumerateInstanceExtensionProperties"))
+    if functions.enumerateInstanceExtensionProperties == nil {
+        return false
+    }
+
+    functions.enumerateInstanceLayerProperties = vk.ProcEnumerateInstanceLayerProperties(getInstanceProcAddr(nil, "vkEnumerateInstanceLayerProperties"))
+    if functions.enumerateInstanceLayerProperties == nil {
+        return false
+    }
+
+    functions.enumerateInstanceVersion = vk.ProcEnumerateInstanceVersion(getInstanceProcAddr(nil, "vkEnumerateInstanceVersion"))
+    if functions.enumerateInstanceVersion == nil {
+        return false
+    }
+
+    return true
+}
+
 InstanceFunctionPointers :: struct {
     getInstanceProcAddr:                    vk.ProcGetInstanceProcAddr,
     getDeviceProcAddr:                      vk.ProcGetDeviceProcAddr,
@@ -16,16 +53,12 @@ InstanceFunctionPointers :: struct {
     createDevice:                           vk.ProcCreateDevice,
 }
 
-loadInstanceFunctions :: proc "c" (instance: vk.Instance, getInstanceProcAddr: vk.ProcGetInstanceProcAddr, functions: ^InstanceFunctionPointers) -> b32 {
+loadVulkanInstanceFunctions :: proc "c" (instance: vk.Instance, getInstanceProcAddr: vk.ProcGetInstanceProcAddr, functions: ^InstanceFunctionPointers) -> b32 {
     if instance == nil || getInstanceProcAddr == nil || functions == nil {
         return false
     }
 
     functions.getInstanceProcAddr = getInstanceProcAddr
-    if functions.getInstanceProcAddr == nil {
-        return false
-    }
-
     functions.getDeviceProcAddr = vk.ProcGetDeviceProcAddr(getInstanceProcAddr(instance, "vkGetDeviceProcAddr"))
     if functions.getDeviceProcAddr == nil {
         return false
@@ -87,7 +120,7 @@ InstanceSurfaceKHRFunctionPointers :: struct {
     getPhysicalDeviceSurfacePresentModes:   vk.ProcGetPhysicalDeviceSurfacePresentModesKHR,
 }
 
-loadInstanceSurfaceKHRFunctions :: proc "c" (instance: vk.Instance, getInstanceProcAddr: vk.ProcGetInstanceProcAddr, functions: ^InstanceSurfaceKHRFunctionPointers) -> b32 {
+loadVulkanInstanceSurfaceKHRFunctions :: proc "c" (instance: vk.Instance, getInstanceProcAddr: vk.ProcGetInstanceProcAddr, functions: ^InstanceSurfaceKHRFunctionPointers) -> b32 {
     if instance == nil || getInstanceProcAddr == nil || functions == nil {
         return false
     }
@@ -134,7 +167,7 @@ InstanceDebugUtilsEXTFunctionPointers :: struct {
     submitDebugUtilsMessage:    vk.ProcSubmitDebugUtilsMessageEXT,
 }
 
-loadInstanceDebugUtilsEXTFunctions :: proc "c" (instance: vk.Instance, getInstanceProcAddr: vk.ProcGetInstanceProcAddr, functions: ^InstanceDebugUtilsEXTFunctionPointers) -> b32 {
+loadVulkanInstanceDebugUtilsEXTFunctions :: proc "c" (instance: vk.Instance, getInstanceProcAddr: vk.ProcGetInstanceProcAddr, functions: ^InstanceDebugUtilsEXTFunctionPointers) -> b32 {
     if instance == nil || getInstanceProcAddr == nil || functions == nil {
         return false
     }
@@ -320,7 +353,7 @@ DeviceFunctionPointers :: struct {
     cmdEndRenderPass:                   vk.ProcCmdEndRenderPass,
 }
 
-loadDeviceFunctions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.ProcGetDeviceProcAddr, functions: ^DeviceFunctionPointers) -> b32 {
+loadVulkanDeviceFunctions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.ProcGetDeviceProcAddr, functions: ^DeviceFunctionPointers) -> b32 {
     if device == nil || getDeviceProcAddr == nil || functions == nil {
         return false
     }
@@ -936,7 +969,7 @@ DeviceSwapchainKHRFunctionPointers :: struct {
     queuePresent:       vk.ProcQueuePresentKHR,
 }
 
-loadDeviceSwapchainKHRFunctions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.ProcGetDeviceProcAddr, functions: ^DeviceSwapchainKHRFunctionPointers) -> b32 {
+loadVulkanDeviceSwapchainKHRFunctions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.ProcGetDeviceProcAddr, functions: ^DeviceSwapchainKHRFunctionPointers) -> b32 {
     if device == nil || getDeviceProcAddr == nil || functions == nil {
         return false
     }
@@ -974,7 +1007,7 @@ DeviceDynamicRenderingKHRFunctionPointers :: struct {
     cmdEndRendering:    vk.ProcCmdEndRendering,
 }
 
-loadDeviceDynamicRenderingKHRFunctions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.ProcGetDeviceProcAddr, functions: ^DeviceDynamicRenderingKHRFunctionPointers) -> b32 {
+loadVulkanDeviceDynamicRenderingKHRFunctions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.ProcGetDeviceProcAddr, functions: ^DeviceDynamicRenderingKHRFunctionPointers) -> b32 {
     if device == nil || getDeviceProcAddr == nil || functions == nil {
         return false
     }

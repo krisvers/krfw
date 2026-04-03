@@ -80,20 +80,23 @@ Renderer :: struct {
 
     /* pre-init members */
     _debugLogger:       krfw.ProcDebugLogger,
+    _debugLoggerBuffer: [8192]u8,
     _ctx:               runtime.Context,
-    _libraryPath:       string,
+    _library:           dynlib.Library,
+    _globalFunctions:   GlobalFunctionPointers,
 
     _debug:     bool,
-    _library:   dynlib.Library,
     _allocator: ^vk.AllocationCallbacks,
     _instance:  Instance,
     _device:    Device,
 }
 
-ProcRendererSetVulkanLoaderPath         :: #type proc "c" (this: ^Renderer, len: u32, path: [^]u8)
-ProcRendererSetVulkanLoaderPathUnicode  :: #type proc "c" (this: ^Renderer, len: u32, path: [^]rune)
+ProcRendererLoadVulkanLoaderOdin    :: #type proc "c" (this: ^Renderer, path: string) -> b32
+ProcRendererLoadVulkanLoader        :: #type proc "c" (this: ^Renderer, len: u32, path: [^]u8) -> b32
+ProcRendererLoadVulkanLoaderUnicode :: #type proc "c" (this: ^Renderer, len: u32, path: [^]rune) -> b32
 
 RendererVTable :: struct {
-    setVulkanLoaderPath:        ProcRendererSetVulkanLoaderPath,
-    setVulkanLoaderPathUnicode: ProcRendererSetVulkanLoaderPathUnicode,
+    loadVulkanLoaderOdin:       ProcRendererLoadVulkanLoaderOdin,
+    loadVulkanLoader:           ProcRendererLoadVulkanLoader,
+    loadVulkanLoaderUnicode:    ProcRendererLoadVulkanLoaderUnicode,
 }

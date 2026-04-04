@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 if [ "$1" == "release" ]; then
     odin build ./src -out:build/demo
 else

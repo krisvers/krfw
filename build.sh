@@ -1,4 +1,7 @@
 #!/bin/bash
+if [ -z "$BASH_VERSION" ]; then
+    exec /bin/bash "$0" "$@"
+fi
 
 if [ "$1" == "release" ]; then
     odin build ./src -out:build/demo

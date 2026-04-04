@@ -13,19 +13,19 @@ import "../../krfw"
 import vk "vendor:vulkan"
 
 when ODIN_OS == .Windows {
-    VULKAN_LOADER_DEFAULT_HANDLE := nil
+    VULKAN_LOADER_DEFAULT_HANDLE := dynlib.Library(nil)
     VULKAN_LOADER_DEFAULT_PATHS := []string {
         "vulkan-1.dll"
     }
 } else when ODIN_OS == .Linux {
-    VULKAN_LOADER_DEFAULT_HANDLE := nil
+    VULKAN_LOADER_DEFAULT_HANDLE := dynlib.Library(nil)
     VULKAN_LOADER_DEFAULT_PATHS := []string {
         "libvulkan.so",
         "libvulkan-1.so",
         "libvulkan.so.1",
     }
 } else when ODIN_OS == .FreeBSD || ODIN_OS == .OpenBSD {
-    VULKAN_LOADER_DEFAULT_HANDLE := nil
+    VULKAN_LOADER_DEFAULT_HANDLE := dynlib.Library(nil)
     VULKAN_LOADER_DEFAULT_PATHS := []string {
         "libvulkan.so.1.4",
         "libvulkan.so.1.3",
@@ -50,7 +50,7 @@ when ODIN_OS == .Windows {
         "libMoltenVK.dylib"
     }
 } else {
-    VULKAN_LOADER_DEFAULT_HANDLE := nil
+    VULKAN_LOADER_DEFAULT_HANDLE := dynlib.Library(nil)
     VULKAN_LOADER_DEFAULT_PATHS := []string {}
 }
 

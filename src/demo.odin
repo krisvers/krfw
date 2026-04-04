@@ -17,11 +17,11 @@ main :: proc() {
         fmt.printfln("[%s] (%s): %s", severity, origin, message)
     }, krfw.DebugSeverity.Verbose)
 
-    if !pRenderer->init(true) {
+    if !pRenderer->init(headless = false, debug = true) {
         panic("Failed to initialize renderer")
     }
 
-
+    
 
     pRenderer->destroy()
 }

@@ -1,5 +1,8 @@
 package krfw
 
+VERSION_MAJOR :: 0
+VERSION_MINOR :: 1
+
 WSIHandle :: distinct u64
 
 WSI_HANDLE_INVALID :: max(WSIHandle)
@@ -56,7 +59,7 @@ DebugSeverity :: enum i32 {
 ProcDebugLogger :: #type proc "c" (severity: DebugSeverity, originLen: u32, origin: cstring, messageLen: u32, message: cstring)
 
 ProcIRendererSetDebugLogger :: #type proc "c" (this: ^IRenderer, logger: ProcDebugLogger, lowestSeverity := DebugSeverity.Warning)
-ProcIRendererInit           :: #type proc "c" (this: ^IRenderer, debug := b32(false)) -> b32
+ProcIRendererInit           :: #type proc "c" (this: ^IRenderer, headless := b32(false), debug := b32(false)) -> b32
 ProcIRendererDestroy        :: #type proc "c" (this: ^IRenderer)
 ProcIRendererCreateWSI      :: #type proc "c" (this: ^IRenderer, window: ^Window, setting := WSISetting.DontCare) -> WSIHandle
 ProcIRendererDestroyWSI     :: #type proc "c" (this: ^IRenderer, handle: WSIHandle)

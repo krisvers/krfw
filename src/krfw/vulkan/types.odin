@@ -15,9 +15,9 @@ InstanceEXTFunctions :: struct {
 }
 
 InstanceFunctions :: struct {
-    using _:    InstanceFunctionPointers,
-    khr:        InstanceKHRFunctions,
-    ext:        InstanceEXTFunctions,
+    using instanceFunctionPointers: InstanceFunctionPointers,
+    khr:                            InstanceKHRFunctions,
+    ext:                            InstanceEXTFunctions,
 }
 
 Instance :: struct {
@@ -35,9 +35,9 @@ DeviceEXTFunctions :: struct {
 }
 
 DeviceFunctions :: struct {
-    using _:    DeviceFunctionPointers,
-    khr:        DeviceKHRFunctions,
-    ext:        DeviceEXTFunctions,
+    using deviceFunctionPointers:   DeviceFunctionPointers,
+    khr:                            DeviceKHRFunctions,
+    ext:                            DeviceEXTFunctions,
 }
 
 Device :: struct {
@@ -81,11 +81,12 @@ Renderer :: struct {
     /* pre-init members */
     _debugLogger:               krfw.ProcDebugLogger,
     _debugLoggerLowestSeverity: krfw.DebugSeverity,
-    _debugLoggerBuffer:         [8192]u8,
+    _debugLoggerBuffer:         [2048]u8,
     _ctx:                       runtime.Context,
     _library:                   dynlib.Library,
     _globalFunctions:           GlobalFunctionPointers,
 
+    _headless:  bool,
     _debug:     bool,
     _allocator: ^vk.AllocationCallbacks,
     _instance:  Instance,

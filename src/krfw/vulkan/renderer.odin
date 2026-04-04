@@ -12,10 +12,6 @@ import "core:unicode/utf8"
 import "../../krfw"
 import vk "vendor:vulkan"
 
-import win32 "core:sys/windows"
-import "core:sys/darwin"
-import "core:sys/posix"
-
 when ODIN_OS == .Windows {
     VULKAN_LOADER_DEFAULT_HANDLE :: nil
     VULKAN_LOADER_DEFAULT_PATHS := []string {

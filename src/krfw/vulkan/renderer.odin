@@ -13,19 +13,19 @@ import "../../krfw"
 import vk "vendor:vulkan"
 
 when ODIN_OS == .Windows {
-    VULKAN_LOADER_DEFAULT_HANDLE :: nil
+    VULKAN_LOADER_DEFAULT_HANDLE := nil
     VULKAN_LOADER_DEFAULT_PATHS := []string {
         "vulkan-1.dll"
     }
 } else when ODIN_OS == .Linux {
-    VULKAN_LOADER_DEFAULT_HANDLE :: nil
+    VULKAN_LOADER_DEFAULT_HANDLE := nil
     VULKAN_LOADER_DEFAULT_PATHS := []string {
         "libvulkan.so",
         "libvulkan-1.so",
         "libvulkan.so.1",
     }
 } else when ODIN_OS == .FreeBSD || ODIN_OS == .OpenBSD {
-    VULKAN_LOADER_DEFAULT_HANDLE :: nil
+    VULKAN_LOADER_DEFAULT_HANDLE := nil
     VULKAN_LOADER_DEFAULT_PATHS := []string {
         "libvulkan.so.1.4",
         "libvulkan.so.1.3",
@@ -38,7 +38,7 @@ when ODIN_OS == .Windows {
     }
 } else when ODIN_OS == .Darwin {
     /* equivalent to macOS <dlfcn.h> RTLD_DEFAULT = ((void*) -2) (adapted from https://github.com/karl-zylinski/karl2d/blob/master/platform_mac_glue_gl.odin#L91) */
-    VULKAN_LOADER_DEFAULT_HANDLE :: dynlib.Library(~uintptr(0) - 1)
+    VULKAN_LOADER_DEFAULT_HANDLE := dynlib.Library(~uintptr(0) - 1)
     
     /* (adapted from https://github.com/libsdl-org/SDL/blob/main/src/video/cocoa/SDL_cocoavulkan.m#L38) */
     VULKAN_LOADER_DEFAULT_PATHS := []string {
@@ -50,7 +50,7 @@ when ODIN_OS == .Windows {
         "libMoltenVK.dylib"
     }
 } else {
-    VULKAN_LOADER_DEFAULT_HANDLE :: nil
+    VULKAN_LOADER_DEFAULT_HANDLE := nil
     VULKAN_LOADER_DEFAULT_PATHS := []string {}
 }
 

@@ -20,20 +20,20 @@ when ODIN_OS == .Windows {
 } else when ODIN_OS == .Linux {
     VULKAN_LOADER_DEFAULT_HANDLE := dynlib.Library(nil)
     VULKAN_LOADER_DEFAULT_PATHS := []string {
+        "libvulkan.so.1",
         "libvulkan.so",
         "libvulkan-1.so",
-        "libvulkan.so.1",
     }
 } else when ODIN_OS == .FreeBSD || ODIN_OS == .OpenBSD {
     VULKAN_LOADER_DEFAULT_HANDLE := dynlib.Library(nil)
     VULKAN_LOADER_DEFAULT_PATHS := []string {
+        "libvulkan.so.1",
+        "libvulkan.so",
         "libvulkan.so.1.4",
         "libvulkan.so.1.3",
         "libvulkan.so.1.2",
         "libvulkan.so.1.1",
         "libvulkan.so.1.0",
-        "libvulkan.so.1",
-        "libvulkan.so",
         "libvulkan-1.so",
     }
 } else when ODIN_OS == .Darwin {

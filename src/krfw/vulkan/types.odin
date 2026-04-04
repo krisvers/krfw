@@ -79,11 +79,12 @@ Renderer :: struct {
     using _:            RendererVTable,
 
     /* pre-init members */
-    _debugLogger:       krfw.ProcDebugLogger,
-    _debugLoggerBuffer: [8192]u8,
-    _ctx:               runtime.Context,
-    _library:           dynlib.Library,
-    _globalFunctions:   GlobalFunctionPointers,
+    _debugLogger:               krfw.ProcDebugLogger,
+    _debugLoggerLowestSeverity: krfw.DebugSeverity,
+    _debugLoggerBuffer:         [8192]u8,
+    _ctx:                       runtime.Context,
+    _library:                   dynlib.Library,
+    _globalFunctions:           GlobalFunctionPointers,
 
     _debug:     bool,
     _allocator: ^vk.AllocationCallbacks,

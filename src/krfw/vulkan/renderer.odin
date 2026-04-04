@@ -56,7 +56,7 @@ when ODIN_OS == .Windows {
 
 RENDERER := Renderer {
     /* inherited functions */
-    setDebugLogger = krfw.ProcIRendererSetDebugLogger(setDebugLogger),
+    setDebugLogger  = krfw.ProcIRendererSetDebugLogger(setDebugLogger),
     init            = krfw.ProcIRendererInit(init),
     destroy         = krfw.ProcIRendererDestroy(destroy),
     createWSI       = krfw.ProcIRendererCreateWSI(createWSI),
@@ -77,6 +77,10 @@ _logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: strin
 
     context = this._ctx
     if this._debugLogger == nil {
+        return
+    }
+
+    if severity < this._debugLoggerLowestSeverity {
         return
     }
     
@@ -114,22 +118,30 @@ _logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: strin
     }
 }
 
-_logAutoOrigin :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: string, loc := #caller_location) {
+_logAuto :: proc(this: ^Renderer, severity: krfw.DebugSeverity, format: string, args: ..any, loc := #caller_location) {
     assert(this != nil)
 
     context = this._ctx
-    _logManual(this, severity, message, fmt.tprintf("%s:%s (line %d)", loc.procedure, loc.file_path, loc.line))
+
+    origin := fmt.tprintf("%s():%d", loc.procedure, loc.line)
+    defer delete(origin, context.temp_allocator)
+
+    message := fmt.tprintf(format, ..args)
+    defer delete(message, context.temp_allocator)
+
+    _logManual(this, severity, message, origin)
 }
 
-_log :: proc{ _logManual, _logAutoOrigin }
+_log :: proc{ _logManual, _logAuto }
 
-setDebugLogger :: proc "c" (this: ^Renderer, logger: krfw.ProcDebugLogger) {
+setDebugLogger :: proc "c" (this: ^Renderer, logger: krfw.ProcDebugLogger, lowestSeverity := krfw.DebugSeverity.Warning) {
     if this == nil {
         return
     }
 
     context = this._ctx
     this._debugLogger = logger
+    this._debugLoggerLowestSeverity = lowestSeverity
 }
 
 loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
@@ -188,14 +200,18 @@ init :: proc "c" (this: ^Renderer, debug := b32(false)) -> b32 {
         p, ok := dynlib.symbol_address(this._library, "vkGetInstanceProcAddr")
         if ok {
             this._instance.getInstanceProcAddr = vk.ProcGetInstanceProcAddr(p)
+            _log(this, krfw.DebugSeverity.Verbose, "Using pre-provided Vulkan library for loading")
         }
     }
 
     for i in 0..<len(VULKAN_LOADER_DEFAULT_PATHS) {
+        _logAuto(this, krfw.DebugSeverity.Verbose, "Attempting to load default library %d: \"%s\"", i, VULKAN_LOADER_DEFAULT_PATHS[i])
         library, ok := dynlib.load_library(VULKAN_LOADER_DEFAULT_PATHS[i])
         if !ok {
             continue
         }
+        
+        _log(this, krfw.DebugSeverity.Verbose, "Default library %d: \"%s\" loaded library successfully", i, VULKAN_LOADER_DEFAULT_PATHS[i])
 
         p: rawptr
         p, ok = dynlib.symbol_address(library, "vkGetInstanceProcAddr")
@@ -203,6 +219,8 @@ init :: proc "c" (this: ^Renderer, debug := b32(false)) -> b32 {
             dynlib.unload_library(library)
             continue
         }
+
+        _log(this, krfw.DebugSeverity.Verbose, "Default library %d: \"%s\" loaded vkGetInstanceProcAddr successfully", i, VULKAN_LOADER_DEFAULT_PATHS[i])
         
         this._library = library
         this._globalFunctions.getInstanceProcAddr = vk.ProcGetInstanceProcAddr(p)

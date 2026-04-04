@@ -55,7 +55,7 @@ DebugSeverity :: enum i32 {
 
 ProcDebugLogger :: #type proc "c" (severity: DebugSeverity, originLen: u32, origin: cstring, messageLen: u32, message: cstring)
 
-ProcIRendererSetDebugLogger :: #type proc "c" (this: ^IRenderer, logger: ProcDebugLogger)
+ProcIRendererSetDebugLogger :: #type proc "c" (this: ^IRenderer, logger: ProcDebugLogger, lowestSeverity := DebugSeverity.Warning)
 ProcIRendererInit           :: #type proc "c" (this: ^IRenderer, debug := b32(false)) -> b32
 ProcIRendererDestroy        :: #type proc "c" (this: ^IRenderer)
 ProcIRendererCreateWSI      :: #type proc "c" (this: ^IRenderer, window: ^Window, setting := WSISetting.DontCare) -> WSIHandle

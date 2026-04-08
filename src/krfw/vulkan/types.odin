@@ -88,7 +88,10 @@ RendererBuffers :: struct {
 }
 
 WSI :: struct {
-    surface: vk.SurfaceKHR,
+    window:     krfw.Window,
+
+    setting:    krfw.WSISetting,
+    surface:    vk.SurfaceKHR,
 }
 
 Renderer :: struct {
@@ -106,7 +109,7 @@ Renderer :: struct {
 
     /* pre-init, destroyed at the end of init */
     _areWindowsQueued:  bool,
-    _queuedWindows:     [dynamic]krfw.Window,
+    _queuedWindows:     [dynamic]WSI,
 
     /* init members */
     _headless:  bool,
@@ -132,6 +135,8 @@ ProcRendererLoadVulkanLoaderUTF32   :: #type proc "c" (this: ^Renderer, len: u32
 ProcRendererSetDriverPreferenceOdin :: #type proc "c" (this: ^Renderer, driver: string)
 ProcRendererSetDriverPreference     :: #type proc "c" (this: ^Renderer, len: u32, driver: cstring)
 
+ProcRendererSetAllocator            :: #type proc "c" (this: ^Renderer, allocator: ^vk.AllocationCallbacks)
+
 RendererVTable :: struct {
     loadVulkanLoaderOdin:       ProcRendererLoadVulkanLoaderOdin,
     loadVulkanLoader:           ProcRendererLoadVulkanLoader,
@@ -139,4 +144,6 @@ RendererVTable :: struct {
 
     setDriverPreferenceOdin:    ProcRendererSetDriverPreferenceOdin,
     setDriverPreference:        ProcRendererSetDriverPreference,
+
+    setAllocator:               ProcRendererSetAllocator,
 }

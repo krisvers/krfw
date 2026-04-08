@@ -99,6 +99,8 @@ RENDERER := Renderer {
     setDriverPreferenceOdin = setDriverPreferenceOdin,
     setDriverPreference     = setDriverPreference,
 
+    setAllocator            = setAllocator,
+
     _ctx                = runtime.default_context(),
     _library            = VULKAN_LOADER_DEFAULT_HANDLE,
 }
@@ -182,7 +184,7 @@ _log :: proc{ _logManual, _logAuto }
 
 /* Vulkan helper functions */
 _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.SurfaceKHR {
-    if this == nil {
+    if this == nil || window == nil {
         return 0
     }
 
@@ -194,9 +196,12 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
 
     surface: vk.SurfaceKHR
     when ODIN_OS == .Windows {
+        if window.nativeWindowType != .Win32 {
+            return 0
+        }
+
         createWin32SurfaceKHR := vk.ProcCreateWin32SurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateWin32SurfaceKHR"))
         if createWin32SurfaceKHR == nil {
-            _log(this, .Error, "Failed to load Vulkan function vkCreateWin32SurfaceKHR from extension VK_KHR_win32_surface")
             return 0
         }
 
@@ -204,6 +209,93 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
             sType = .WIN32_SURFACE_CREATE_INFO_KHR,
             hinstance = vk.HINSTANCE(window.nativeDisplayHandle),
             hwnd = vk.HWND(window.nativeWindowHandle),
+        }
+
+        if createWin32SurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+            return 0
+        }
+    } else when ODIN_OS == .Linux {
+        #partial switch window.nativeWindowType {
+            case .Xlib:
+                createXlibSurfaceKHR := vk.ProcCreateXlibSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateXlibSurfaceKHR"))
+                if createXlibSurfaceKHR == nil {
+                    return 0
+                }
+
+                ci := vk.XlibSurfaceCreateInfoKHR {
+                    sType = .XLIB_SURFACE_CREATE_INFO_KHR,
+                    dpy = (^vk.XlibDisplay)(window.nativeDisplayHandle),
+                    window = (vk.XlibWindow)(window.nativeWindowHandle),
+                }
+
+                if createXlibSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    return 0
+                }
+            case .Xcb:
+                createXcbSurfaceKHR := vk.ProcCreateXcbSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateXcbSurfaceKHR"))
+                if createXcbSurfaceKHR == nil {
+                    return 0
+                }
+
+                ci := vk.XcbSurfaceCreateInfoKHR {
+                    sType = .XCB_SURFACE_CREATE_INFO_KHR,
+                    connection = (^vk.xcb_connection_t)(window.nativeDisplayHandle),
+                    window = (vk.xcb_window_t)(window.nativeWindowHandle),
+                }
+
+                if createXcbSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    return 0
+                }
+            case .Wayland:
+                createWaylandSurfaceKHR := vk.ProcCreateWaylandSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateWaylandSurfaceKHR"))
+                if createWaylandSurfaceKHR == nil {
+                    return 0
+                }
+
+                ci := vk.WaylandSurfaceCreateInfoKHR {
+                    sType = .WAYLAND_SURFACE_CREATE_INFO_KHR,
+                    display = (^vk.wl_display)(window.nativeDisplayHandle),
+                    surface = (^vk.wl_surface)(window.nativeWindowHandle),
+                }
+
+                if createWaylandSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    return 0
+                }
+            case:
+                return 0
+        }
+    } else when ODIN_OS == .Darwin {
+        #partial switch window.nativeWindowType {
+            case .Metal:
+                createMetalSurfaceEXT := vk.ProcCreateMetalSurfaceEXT(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateMetalSurfaceEXT"))
+                if createMetalSurfaceEXT == nil {
+                    return 0
+                }
+
+                ci := vk.MetalSurfaceCreateInfoEXT {
+                    sType = .METAL_SURFACE_CREATE_INFO_EXT,
+                    pLayer = (^vk.CAMetalLayer)(window.nativeWindowHandle),
+                }
+
+                if createMetalSurfaceEXT(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    return 0
+                }
+            case .Cocoa:
+                createMetalSurfaceEXT := vk.ProcCreateMetalSurfaceEXT(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateMetalSurfaceEXT"))
+                if createMetalSurfaceEXT == nil {
+                    return 0
+                }
+
+                ci := vk.MetalSurfaceCreateInfoEXT {
+                    sType = .METAL_SURFACE_CREATE_INFO_EXT,
+                    pLayer = (^vk.CAMetalLayer)(_getCAMetalLayerFromNSWindow(window.nativeWindowHandle)),
+                }
+
+                if createMetalSurfaceEXT(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    return 0
+                }
+            case:
+                return 0
         }
     }
 
@@ -295,6 +387,16 @@ setDriverPreference :: proc "c" (this: ^Renderer, len: u32, driver: cstring) {
     context = this._ctx
 
     setDriverPreferenceOdin(this, strings.string_from_ptr(transmute([^]u8)driver, int(len)))
+}
+
+setAllocator :: proc "c" (this: ^Renderer, allocator: ^vk.AllocationCallbacks) {
+    if this == nil {
+        return
+    }
+
+    context = this._ctx
+
+    this._allocator = allocator
 }
 
 /* init and post-init */
@@ -651,16 +753,15 @@ init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false
 
     /* create queued windows if necessary */
     if this._areWindowsQueued {
-        for &window in this._queuedWindows {
-            surface := _createSurface(this, &window)
+        for &wsi in this._queuedWindows {
+            surface := _createSurface(this, &wsi.window)
             if surface == 0 {
                 _log(this, .Error, "Failed to create Vulkan surface from window queued by createWSI prior to init; ignoring error for now")
                 continue
             }
 
-            this._wsis[window] = {
-                surface = surface
-            }
+            wsi.surface = surface
+            this._wsis[wsi.window] = wsi
         }
 
         delete(this._queuedWindows)
@@ -1272,14 +1373,32 @@ createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WS
     if this._instance.instance == nil {
         if !this._areWindowsQueued {
             this._areWindowsQueued = true
-            this._queuedWindows = make([dynamic]krfw.Window)
+            this._queuedWindows = make([dynamic]WSI)
         }
 
-        append(&this._queuedWindows, window^)
+        append(&this._queuedWindows, WSI {
+            window = window^,
+            
+            setting = setting,
+            surface = 0,
+        })
         return true
     }
 
-    return false
+    surface := _createSurface(this, window)
+    if surface == 0 {
+        _log(this, .Fatal, "Failed to create Vulkan surface for window")
+        return false
+    }
+
+    this._wsis[window^] = {
+        window = window^,
+
+        setting = setting,
+        surface = surface
+    }
+
+    return true
 }
 
 destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
@@ -1288,8 +1407,23 @@ destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
     }
 
     context = this._ctx
-    
 
+    wsi, ok := this._wsis[window^]
+    if !ok {
+        return
+    }
+    
+    if this._device.logical != nil {
+        if this._device.deviceWaitIdle != nil {
+            this._device.deviceWaitIdle(this._device.logical)
+        }
+    }
+
+    if this._instance.khr.surface.destroySurface != nil {
+        this._instance.khr.surface.destroySurface(this._instance.instance, wsi.surface, this._allocator)
+    }
+
+    delete_key(&this._wsis, window^)
 }
 
 executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^krfw.IPass, window: ^krfw.Window) -> b32 {

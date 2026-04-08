@@ -3,10 +3,6 @@ package krfw
 VERSION_MAJOR :: 0
 VERSION_MINOR :: 1
 
-WSIHandle :: distinct u64
-
-WSI_HANDLE_INVALID :: max(WSIHandle)
-
 WSISetting :: enum u32 {
     DontCare    = 0,
     VSync       = 1,
@@ -48,7 +44,6 @@ IRenderer :: struct {
 }
 
 DebugSeverity :: enum i32 {
-    Debug   = -2,
     Verbose = -1,
     Info    =  0,
     Warning =  1,
@@ -59,11 +54,11 @@ DebugSeverity :: enum i32 {
 ProcDebugLogger :: #type proc "c" (severity: DebugSeverity, originLen: u32, origin: cstring, messageLen: u32, message: cstring)
 
 ProcIRendererSetDebugLogger :: #type proc "c" (this: ^IRenderer, logger: ProcDebugLogger, lowestSeverity := DebugSeverity.Warning)
-ProcIRendererInit           :: #type proc "c" (this: ^IRenderer, headless := b32(false), debug := b32(false)) -> b32
+ProcIRendererInit           :: #type proc "c" (this: ^IRenderer, lowPower := b32(false), headless := b32(false), debug := b32(false)) -> b32
 ProcIRendererDestroy        :: #type proc "c" (this: ^IRenderer)
-ProcIRendererCreateWSI      :: #type proc "c" (this: ^IRenderer, window: ^Window, setting := WSISetting.DontCare) -> WSIHandle
-ProcIRendererDestroyWSI     :: #type proc "c" (this: ^IRenderer, handle: WSIHandle)
-ProcIRendererExecutePasses  :: #type proc "c" (this: ^IRenderer, passCount: u32, passes: [^]^IPass, wsiHandle := WSI_HANDLE_INVALID) -> b32
+ProcIRendererCreateWSI      :: #type proc "c" (this: ^IRenderer, window: ^Window, setting := WSISetting.DontCare) -> b32
+ProcIRendererDestroyWSI     :: #type proc "c" (this: ^IRenderer, window: ^Window)
+ProcIRendererExecutePasses  :: #type proc "c" (this: ^IRenderer, passCount: u32, passes: [^]^IPass, window: ^Window) -> b32
 
 IRendererVTable :: struct {
     setDebugLogger: ProcIRendererSetDebugLogger,

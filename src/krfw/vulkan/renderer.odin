@@ -15,9 +15,30 @@ import vk "vendor:vulkan"
 VERSION_PATCH_VULKAN :: 0
 
 /* for VK_KHR_dynamic_rendering and Vulkan 1.1/1.2 features */
-REQUIRED_VULKAN_VERSION_MAJOR :: 1
-REQUIRED_VULKAN_VERSION_MINOR :: 2
-REQUIRED_VULKAN_VERSION_PATCH :: 197
+REQUIRED_VULKAN_VERSION_VARIANT :: 0
+REQUIRED_VULKAN_VERSION_MAJOR   :: 1
+REQUIRED_VULKAN_VERSION_MINOR   :: 2
+REQUIRED_VULKAN_VERSION_PATCH   :: 197
+
+VK_MAKE_API_VERSION :: proc(variant: u32, major: u32, minor: u32, patch: u32) -> u32 {
+    return (variant << 29) | (major << 22) | (minor << 12) | (patch)
+}
+
+VK_API_VERSION_VARIANT :: proc(version: u32) -> u32 {
+    return (version >> 29) & 0x7
+}
+
+VK_API_VERSION_MAJOR :: proc(version: u32) -> u32 {
+    return (version >> 22) & 0x7f
+}
+
+VK_API_VERSION_MINOR :: proc(version: u32) -> u32 {
+    return (version >> 12) & 0x3ff
+}
+
+VK_API_VERSION_PATCH :: proc(version: u32) -> u32 {
+    return version & 0xfff
+}
 
 when ODIN_OS == .Windows {
     VULKAN_LOADER_DEFAULT_HANDLE := dynlib.Library(nil)
@@ -70,13 +91,16 @@ RENDERER := Renderer {
     destroyWSI      = krfw.ProcIRendererDestroyWSI(destroyWSI),
     executePasses   = krfw.ProcIRendererExecutePasses(executePasses),
 
-    /* custom functions */
+    /* Vulkan backend specific functions */
     loadVulkanLoaderOdin    = loadVulkanLoaderOdin,
     loadVulkanLoader        = loadVulkanLoader,
     loadVulkanLoaderUnicode = loadVulkanLoaderUnicode,
 
-    _ctx            = runtime.default_context(),
-    _library        = VULKAN_LOADER_DEFAULT_HANDLE,
+    setDriverPreferenceOdin = setDriverPreferenceOdin,
+    setDriverPreference     = setDriverPreference,
+
+    _ctx                = runtime.default_context(),
+    _library            = VULKAN_LOADER_DEFAULT_HANDLE,
 }
 
 _logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: string, origin: string) {
@@ -89,6 +113,10 @@ _logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: strin
 
     if severity < this._debugLoggerLowestSeverity {
         return
+    }
+
+    if this._buffers == nil {
+        this._buffers = new(RendererBuffers)
     }
     
     nextAvailableResidentOffset := 0
@@ -139,14 +167,57 @@ _logAuto :: proc(this: ^Renderer, severity: krfw.DebugSeverity, format: string, 
     _logManual(this, severity, message, origin)
 }
 
+_logAutoExplicitOrigin :: proc(this: ^Renderer, severity: krfw.DebugSeverity, origin: string, format: string, args: ..any) {
+    assert(this != nil)
+
+    context = this._ctx
+
+    message := fmt.tprintf(format, ..args)
+    defer delete(message, context.temp_allocator)
+
+    _logManual(this, severity, message, origin)
+}
+
 _log :: proc{ _logManual, _logAuto }
 
+/* Vulkan helper functions */
+_createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.SurfaceKHR {
+    if this == nil {
+        return 0
+    }
+
+    context = this._ctx
+
+    if this._headless {
+        _log(this, .Warning, "Called Vulkan backend internal _createSurface with a headless renderer; surface support is not likely to be enabled")
+    }
+
+    surface: vk.SurfaceKHR
+    when ODIN_OS == .Windows {
+        createWin32SurfaceKHR := vk.ProcCreateWin32SurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateWin32SurfaceKHR"))
+        if createWin32SurfaceKHR == nil {
+            _log(this, .Error, "Failed to load Vulkan function vkCreateWin32SurfaceKHR from extension VK_KHR_win32_surface")
+            return 0
+        }
+
+        ci := vk.Win32SurfaceCreateInfoKHR {
+            sType = .WIN32_SURFACE_CREATE_INFO_KHR,
+            hinstance = vk.HINSTANCE(window.nativeDisplayHandle),
+            hwnd = vk.HWND(window.nativeWindowHandle),
+        }
+    }
+
+    return surface
+}
+
+/* pre-init */
 setDebugLogger :: proc "c" (this: ^Renderer, logger: krfw.ProcDebugLogger, lowestSeverity := krfw.DebugSeverity.Warning) {
     if this == nil {
         return
     }
 
     context = this._ctx
+
     this._debugLogger = logger
     this._debugLoggerLowestSeverity = lowestSeverity
 }
@@ -157,6 +228,7 @@ loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
     }
 
     context = this._ctx
+
     if this._library != nil && this._library != VULKAN_LOADER_DEFAULT_HANDLE {
         _log(this, krfw.DebugSeverity.Warning, "Cannot load Vulkan loader with new path: library already loaded")
         return false
@@ -172,14 +244,14 @@ loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
     return true
 }
 
-loadVulkanLoader :: proc "c" (this: ^Renderer, len: u32, path: [^]u8) -> b32 {
+loadVulkanLoader :: proc "c" (this: ^Renderer, len: u32, path: cstring) -> b32 {
     if this == nil {
         return false
     }
 
     context = this._ctx
 
-    pathString := strings.string_from_ptr(path, int(len))
+    pathString := strings.string_from_ptr(transmute([^]u8)path, int(len))
     return loadVulkanLoaderOdin(this, pathString)
 }
 
@@ -196,15 +268,53 @@ loadVulkanLoaderUnicode :: proc "c" (this: ^Renderer, len: u32, path: [^]rune) -
     return loadVulkanLoaderOdin(this, pathString)
 }
 
-init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) -> b32 {
+setDriverPreferenceOdin :: proc "c" (this: ^Renderer, driver: string) {
+    if this == nil {
+        return
+    }
+
+    context = this._ctx
+
+    if this._buffers == nil {
+        this._buffers = new(RendererBuffers)
+    }
+
+    if len(driver) >= vk.MAX_DRIVER_NAME_SIZE {
+        _log(this, .Warning, "Driver preference name (%v bytes) is longer than possible actual driver name (%v bytes); truncating driver preference name", len(driver), vk.MAX_DRIVER_NAME_SIZE)
+    }
+
+    mem.copy_non_overlapping(&this._driverPreference[0], raw_data(driver), min(len(driver), 4095))
+    this._driverPreference[min(len(driver), 4095) + 1] = 0
+}
+
+setDriverPreference :: proc "c" (this: ^Renderer, len: u32, driver: cstring) {
+    if this == nil {
+        return
+    }
+
+    context = this._ctx
+
+    setDriverPreferenceOdin(this, strings.string_from_ptr(transmute([^]u8)driver, int(len)))
+}
+
+/* init and post-init */
+init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false), debug := b32(false)) -> b32 {
     if this == nil {
         return false
     }
 
     context = this._ctx
+
+    /* setup containers */
+    if this._buffers == nil {
+        this._buffers = new(RendererBuffers)
+    }
+
     this._headless = bool(headless)
     this._debug = bool(debug)
+    this._wsis = make(map[krfw.Window]WSI)
 
+    /* load Vulkan loader */
     if this._library != nil {
         p, ok := dynlib.symbol_address(this._library, "vkGetInstanceProcAddr")
         if ok {
@@ -246,13 +356,14 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
         return false
     }
 
+    /* determine support for extensions and create instance */
     appInfo := vk.ApplicationInfo {
         sType = .APPLICATION_INFO,
         pApplicationName = "krfw",
-        applicationVersion = vk.MAKE_VERSION(krfw.VERSION_MAJOR, krfw.VERSION_MINOR, VERSION_PATCH_VULKAN),
+        applicationVersion = VK_MAKE_API_VERSION(0, krfw.VERSION_MAJOR, krfw.VERSION_MINOR, VERSION_PATCH_VULKAN),
         pEngineName = "krfw",
-        engineVersion = vk.MAKE_VERSION(krfw.VERSION_MAJOR, krfw.VERSION_MINOR, VERSION_PATCH_VULKAN),
-        apiVersion = vk.MAKE_VERSION(REQUIRED_VULKAN_VERSION_MAJOR, REQUIRED_VULKAN_VERSION_MINOR, REQUIRED_VULKAN_VERSION_PATCH),
+        engineVersion = VK_MAKE_API_VERSION(0, krfw.VERSION_MAJOR, krfw.VERSION_MINOR, VERSION_PATCH_VULKAN),
+        apiVersion = VK_MAKE_API_VERSION(REQUIRED_VULKAN_VERSION_VARIANT, REQUIRED_VULKAN_VERSION_MAJOR, REQUIRED_VULKAN_VERSION_MINOR, REQUIRED_VULKAN_VERSION_PATCH),
     }
 
     debugUtilsMessengerCI := vk.DebugUtilsMessengerCreateInfoEXT {
@@ -278,7 +389,15 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
                 krfwSeverity = .Error
             }
 
-            _log(this, krfwSeverity, "[vk: %s] %s", types, data.pMessage)
+            if .GENERAL in types {
+                krfwSeverity = .Verbose
+            }
+
+            if .VALIDATION in types && krfwSeverity == .Info {
+                krfwSeverity = .Verbose
+            }
+
+            _logAutoExplicitOrigin(this, krfwSeverity, "vk::???():???", "(FORWARDING VULKAN DEBUG MESSAGE): [%s] %s", types, data.pMessage)
             return false
         },
         pUserData = rawptr(this),
@@ -295,7 +414,7 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
 
             context = this._ctx
 
-            _log(this, .Debug, "[vk debug report: %s] (%s %v %v) (%s: %x) %s", flags, layerPrefix, location, messageCode, objectType, object, message)
+            _logAutoExplicitOrigin(this, .Verbose, "vk::???():???", "(FORWARDING VULKAN DEBUG REPORT): [%s] (%s %v %v) (%s: %x) %s", flags, layerPrefix, location, messageCode, objectType, object, message)
             return false
         },
         pUserData = rawptr(this),
@@ -329,17 +448,17 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
         return false
     }
 
-    enabledLayers := make([dynamic]cstring)
-    defer delete(enabledLayers)
+    enabledInstanceLayers := make([dynamic]cstring)
+    defer delete(enabledInstanceLayers)
 
-    enabledExtensions := make([dynamic]cstring)
-    defer delete(enabledExtensions)
+    enabledInstanceExtensions := make([dynamic]cstring)
+    defer delete(enabledInstanceExtensions)
 
     if this._debug {
         for &layerProperties in availableInstanceLayerProperties {
             if strings.compare(string(cstring(&layerProperties.layerName[0])), "VK_LAYER_KHRONOS_validation") == 0 {
                 _log(this, .Verbose, "Enabling instance layer %s", cstring(&layerProperties.layerName[0]))
-                append(&enabledLayers, cstring(&layerProperties.layerName[0]))
+                append(&enabledInstanceLayers, cstring(&layerProperties.layerName[0]))
             }
         }
     }
@@ -347,26 +466,26 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
     flags: vk.InstanceCreateFlags
     next := rawptr(nil)
 
+    foundPortabilityEnumerationKHR := false
     foundDebugUtilsEXT := false
-    foundSurfaceKHR := false
-    foundPlatformSpecificSurfaceExtension := false
-    foundPortabilityEnumeration := false
+    foundSurfaceKHR, foundGetSurfaceCapabilities2KHR, foundSurfaceMaintenace1EXT, foundPlatformSpecificSurfaceExtension: bool
+    
     for &extensionProperties in availableInstanceExtensionProperties {
         if this._debug {
             if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_EXT_debug_utils") == 0 {
                 foundDebugUtilsEXT = true
 
                 debugUtilsMessengerCI.pNext = next
-                next = rawptr(&debugUtilsMessengerCI)
+                next = &debugUtilsMessengerCI
 
                 _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
             } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_EXT_debug_report") == 0 {
                 debugReportCallbackCI.pNext = next
-                next = rawptr(&debugReportCallbackCI)
+                next = &debugReportCallbackCI
 
                 _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
             }
         }
 
@@ -375,18 +494,30 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
 
             if !this._headless {
                 _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
             }
-        }
+        } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_EXT_surface_maintenance1") == 0 {
+            foundSurfaceMaintenace1EXT = true
 
-        if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_portability_enumeration") == 0 {
-            foundPortabilityEnumeration = true
+            if !this._headless {
+                _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
+                append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
+            }
+        } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_get_surface_capabilities2") == 0 {
+            foundGetSurfaceCapabilities2KHR = true
+
+            if !this._headless {
+                _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
+                append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
+            }
+        } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_portability_enumeration") == 0 {
+            foundPortabilityEnumerationKHR = true
             
             when ODIN_OS == .Darwin {
                 flags |= { .ENUMERATE_PORTABILITY_KHR }
 
                 _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
             }
         }
 
@@ -396,7 +527,7 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
 
                 if !this._headless {
                     _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                    append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                    append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
                 }
             }
         } else when ODIN_OS == .Linux {
@@ -405,21 +536,21 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
 
                 if !this._headless {
                     _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                    append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                    append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
                 }
             } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_xcb_surface") == 0 {
                 foundPlatformSpecificSurfaceExtension = true
 
                 if !this._headless {
                     _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                    append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                    append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
                 }
             } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_wayland_surface") == 0 {
                 foundPlatformSpecificSurfaceExtension = true
 
                 if !this._headless {
                     _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                    append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                    append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
                 }
             }
         } else when ODIN_OS == .FreeBSD || ODIN_OS == .OpenBSD {
@@ -428,14 +559,14 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
 
                 if !this._headless {
                     _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                    append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                    append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
                 }
             } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_xcb_surface") == 0 {
                 foundPlatformSpecificSurfaceExtension = true
 
                 if !this._headless {
                     _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                    append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                    append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
                 }
             }
         } else when ODIN_OS == .Darwin {
@@ -444,7 +575,7 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
 
                 if !this._headless {
                     _log(this, .Verbose, "Enabling instance extension %s", cstring(&extensionProperties.extensionName[0]))
-                    append(&enabledExtensions, cstring(&extensionProperties.extensionName[0]))
+                    append(&enabledInstanceExtensions, cstring(&extensionProperties.extensionName[0]))
                 }
             }
         }
@@ -455,13 +586,23 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
         return false
     }
 
+    if !this._headless && !foundSurfaceMaintenace1EXT {
+        _log(this, .Fatal, "Failed to find Vulkan extension VK_EXT_surface_maintenance1 required for non-headless renderers")
+        return false
+    }
+
+    if !this._headless && !foundSurfaceMaintenace1EXT {
+        _log(this, .Fatal, "Failed to find Vulkan extension VK_KHR_get_surface_capabilities2 required for non-headless renderers")
+        return false
+    }
+
     if !this._headless && !foundPlatformSpecificSurfaceExtension {
         _log(this, .Fatal, "Failed to find Vulkan platform specific surface extension required for non-headless renderers")
         return false
     }
     
     when ODIN_OS == .Darwin {
-        if !foundPortabilityEnumeration {
+        if !foundPortabilityEnumerationKHR {
             _log(this, .Fatal, "Failed to find Vulkan extension VK_KHR_portability_enumeration required for Vulkan compatiblity with Apple devices")
             return false
         }
@@ -472,12 +613,13 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
         pNext = next,
         flags = flags,
         pApplicationInfo = &appInfo,
-        enabledLayerCount = u32(len(enabledLayers)),
-        ppEnabledLayerNames = len(enabledLayers) == 0 ? nil : &enabledLayers[0],
-        enabledExtensionCount = u32(len(enabledExtensions)),
-        ppEnabledExtensionNames = len(enabledExtensions) == 0 ? nil : &enabledExtensions[0],
+        enabledLayerCount = u32(len(enabledInstanceLayers)),
+        ppEnabledLayerNames = len(enabledInstanceLayers) == 0 ? nil : &enabledInstanceLayers[0],
+        enabledExtensionCount = u32(len(enabledInstanceExtensions)),
+        ppEnabledExtensionNames = len(enabledInstanceExtensions) == 0 ? nil : &enabledInstanceExtensions[0],
     }
 
+    /* load instance function pointers */
     if this._globalFunctions.createInstance(&instanceCI, this._allocator, &this._instance.instance) != .SUCCESS {
         _log(this, .Fatal, "Failed to create Vulkan instance")
         return false
@@ -485,6 +627,11 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
     
     if !loadVulkanInstanceFunctions(this._instance.instance, this._globalFunctions.getInstanceProcAddr, &this._instance.instanceFunctionPointers) {
         _log(this, .Fatal, "Failed to load Vulkan instance functions")
+        return false
+    }
+
+    if !loadVulkanInstance11Functions(this._instance.instance, this._globalFunctions.getInstanceProcAddr, &this._instance.instance11FunctionPointers) {
+        _log(this, .Fatal, "Failed to load Vulkan 1.1 instance functions")
         return false
     }
     
@@ -502,6 +649,575 @@ init :: proc "c" (this: ^Renderer, headless := b32(false), debug := b32(false)) 
         }
     }
 
+    /* create queued windows if necessary */
+    if this._areWindowsQueued {
+        for &window in this._queuedWindows {
+            surface := _createSurface(this, &window)
+            if surface == 0 {
+                _log(this, .Error, "Failed to create Vulkan surface from window queued by createWSI prior to init; ignoring error for now")
+                continue
+            }
+
+            this._wsis[window] = {
+                surface = surface
+            }
+        }
+
+        delete(this._queuedWindows)
+        this._areWindowsQueued = false
+    }
+
+    /* physical device acquisition */
+    availablePhysicalDeviceCount: u32
+    if this._instance.enumeratePhysicalDevices(this._instance.instance, &availablePhysicalDeviceCount, nil) != .SUCCESS {
+        _log(this, .Fatal, "Failed to enumerate Vulkan physical devices")
+        return false
+    }
+
+    availablePhysicalDevices := make([]vk.PhysicalDevice, availablePhysicalDeviceCount)
+    defer delete(availablePhysicalDevices)
+
+    if this._instance.enumeratePhysicalDevices(this._instance.instance, &availablePhysicalDeviceCount, &availablePhysicalDevices[0]) != .SUCCESS {
+        _log(this, .Fatal, "Failed to enumerate Vulkan physical devices")
+        return false
+    }
+
+    viablePhysicalDevice:                   vk.PhysicalDevice
+    viablePhysicalDeviceProperties:         vk.PhysicalDeviceProperties
+    viablePhysicalDeviceTotalPrivateMemory: vk.DeviceSize
+    viablePhysicalDeviceTotalSharedMemory:  vk.DeviceSize
+    viablePhysicalDeviceSupportScore:       int
+    viablePhysicalDeviceDriverPreferred:    bool
+
+    availablePhysicalDeviceExtensionPropeties := make([dynamic]vk.ExtensionProperties)
+    defer delete(availablePhysicalDeviceExtensionPropeties)
+
+    for &pd in availablePhysicalDevices {
+        properties12 := vk.PhysicalDeviceVulkan12Properties {
+            sType = .PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES
+        }
+
+        properties2 := vk.PhysicalDeviceProperties2 {
+            sType = .PHYSICAL_DEVICE_PROPERTIES_2,
+            pNext = &properties12,
+        }
+
+        this._instance.getPhysicalDeviceProperties2(pd, &properties2)
+
+        _log(this, .Verbose, "Interviewing physical device %s (%s) (API version: %d.%d.%d) with driver %s (version: %d)", cstring(&properties2.properties.deviceName[0]), properties2.properties.deviceType, VK_API_VERSION_MAJOR(properties2.properties.apiVersion), VK_API_VERSION_MINOR(properties2.properties.apiVersion), VK_API_VERSION_PATCH(properties2.properties.apiVersion), cstring(&properties12.driverName[0]), properties2.properties.driverVersion)
+
+        availablePhysicalDeviceExtensionPropertiesCount: u32
+        if this._instance.enumerateDeviceExtensionProperties(pd, nil, &availablePhysicalDeviceExtensionPropertiesCount, nil) != .SUCCESS {
+            _log(this, .Error, "Failed to enumerate physical device %s extensions; continuing to next device", cstring(&properties2.properties.deviceName[0]))
+            continue
+        }
+        
+        resize(&availablePhysicalDeviceExtensionPropeties, availablePhysicalDeviceExtensionPropertiesCount)
+        if this._instance.enumerateDeviceExtensionProperties(pd, nil, &availablePhysicalDeviceExtensionPropertiesCount, &availablePhysicalDeviceExtensionPropeties[0]) != .SUCCESS {
+            _log(this, .Error, "Failed to enumerate physical device %s extensions; continuing to next device", cstring(&properties2.properties.deviceName[0]))
+            continue
+        }
+
+        supportScore := int(0)
+        if properties12.shaderUniformBufferArrayNonUniformIndexingNative {
+            supportScore += 5
+        }
+        
+        if properties12.shaderSampledImageArrayNonUniformIndexingNative {
+            supportScore += 10
+        }
+        
+        if properties12.shaderStorageBufferArrayNonUniformIndexingNative {
+            supportScore += 10
+        }
+        
+        if properties12.shaderStorageImageArrayNonUniformIndexingNative {
+            supportScore += 10
+        }
+
+        if properties12.shaderInputAttachmentArrayNonUniformIndexingNative {
+            supportScore += 2
+        }
+
+        foundPortabilitySubsetKHR: bool
+        foundDynamicRenderingKHR: bool
+        foundSwapchainKHR, foundSwapchainMaintenance1EXT: bool
+
+        for &extensionProperties in availablePhysicalDeviceExtensionPropeties {
+            _log(this, .Verbose, "Interview physical device %s extension %s (specification version: %d)", cstring(&properties2.properties.deviceName[0]), cstring(&extensionProperties.extensionName[0]), extensionProperties.specVersion)
+            if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_swapchain") == 0 {
+                foundSwapchainKHR = true
+            } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_EXT_swapchain_maintenance1") == 0 {
+                foundSwapchainMaintenance1EXT = true
+            } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_dynamic_rendering") == 0 {
+                foundDynamicRenderingKHR = true
+                
+                if !headless {
+                    supportScore += 40
+                }
+            } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_portability_subset") == 0 {
+                foundPortabilitySubsetKHR = true
+            }
+        }
+
+        when ODIN_OS == .Darwin {
+            if !foundPortabilitySubsetKHR {
+                _log(this, .Verbose, "Physical device %s lacks VK_KHR_portability_subset which is required for Apple device compatibility", cstring(&properties2.properties.deviceName[0]))
+                continue
+            }
+        }
+
+        if !headless {
+            if !foundSwapchainKHR {
+                _log(this, .Verbose, "Physical device %s lacks VK_KHR_swapchain; incompatible with non-headless renderer", cstring(&properties2.properties.deviceName[0]))
+                continue
+            } else if !foundSwapchainMaintenance1EXT {
+                _log(this, .Verbose, "Physical device %s lacks VK_EXT_swapchain_maintenance1; incompatible with non-headless renderer", cstring(&properties2.properties.deviceName[0]))
+                continue
+            }
+            
+            if !foundDynamicRenderingKHR {
+                _log(this, .Verbose, "Physical device %s lacks VK_KHR_dynamic_rendering (which is recommended)", cstring(&properties2.properties.deviceName[0]))
+            }
+        }
+
+        features12 := vk.PhysicalDeviceVulkan12Features {
+            sType = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        }
+        
+        features2 := vk.PhysicalDeviceFeatures2 {
+            sType = .PHYSICAL_DEVICE_FEATURES_2,
+            pNext = &features12,
+        }
+
+        this._instance.getPhysicalDeviceFeatures2(pd, &features2)
+
+        if !features2.features.shaderUniformBufferArrayDynamicIndexing {
+            _log(this, .Verbose, "Physical device %s lacks uniform buffer array dynamic indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 15
+        }
+
+        if !features2.features.shaderSampledImageArrayDynamicIndexing {
+            _log(this, .Verbose, "Physical device %s lacks sampled image array dynamic indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 20
+        }
+
+        if !features2.features.shaderStorageImageArrayDynamicIndexing {
+            _log(this, .Verbose, "Physical device %s lacks storage image array dynamic indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 20
+        }
+
+        if !features2.features.shaderStorageBufferArrayDynamicIndexing {
+            _log(this, .Verbose, "Physical device %s lacks storage buffer array dynamic indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 20
+        }
+
+        if !features12.shaderUniformBufferArrayNonUniformIndexing {
+            _log(this, .Verbose, "Physical device %s lacks uniform buffer array non-uniform indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 5
+        }
+
+        if !features12.shaderSampledImageArrayNonUniformIndexing {
+            _log(this, .Verbose, "Physical device %s lacks sampled image array non-uniform indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 10
+        }
+
+        if !features12.shaderStorageImageArrayNonUniformIndexing {
+            _log(this, .Verbose, "Physical device %s lacks storage image array non-uniform indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 10
+        }
+
+        if !features12.shaderStorageBufferArrayNonUniformIndexing {
+            _log(this, .Verbose, "Physical device %s lacks storage buffer array non-uniform indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 10
+        }
+
+        if !features12.shaderInputAttachmentArrayNonUniformIndexing {
+            _log(this, .Verbose, "Physical device %s lacks input attachment array non-uniform indexing", cstring(&properties2.properties.deviceName[0]))
+            supportScore -= 2
+        }
+
+        memoryProperties: vk.PhysicalDeviceMemoryProperties
+        this._instance.getPhysicalDeviceMemoryProperties(pd, &memoryProperties)
+
+        totalPrivateMemory, totalSharedMemory: vk.DeviceSize
+        for i in 0..<memoryProperties.memoryTypeCount {
+            if .DEVICE_LOCAL in memoryProperties.memoryTypes[i].propertyFlags {
+                totalPrivateMemory += memoryProperties.memoryHeaps[i].size
+            } else if .HOST_VISIBLE in memoryProperties.memoryTypes[i].propertyFlags {
+                totalSharedMemory += memoryProperties.memoryHeaps[i].size
+            }
+        }
+
+        driverPreferred := false
+        if this._buffers != nil && this._driverPreference[0] != 0 {
+            if strings.compare(string(cstring(&this._driverPreference[0])), string(cstring(&properties12.driverName[0]))) == 0 {
+                driverPreferred = true
+            }
+        }
+
+        if viablePhysicalDevice == nil {
+            viablePhysicalDevice = pd
+            viablePhysicalDeviceProperties = properties2.properties
+            viablePhysicalDeviceTotalPrivateMemory = totalPrivateMemory
+            viablePhysicalDeviceTotalSharedMemory = totalSharedMemory
+            viablePhysicalDeviceSupportScore = supportScore
+            viablePhysicalDeviceDriverPreferred = driverPreferred
+            continue
+        }
+
+        if !viablePhysicalDeviceDriverPreferred && driverPreferred {
+            _log(this, .Verbose, "Prefer physical device %s over previously viable physical device %s", cstring(&properties2.properties.deviceName[0]), cstring(&viablePhysicalDeviceProperties.deviceName[0]))
+            viablePhysicalDevice = pd
+            viablePhysicalDeviceProperties = properties2.properties
+            viablePhysicalDeviceTotalPrivateMemory = totalPrivateMemory
+            viablePhysicalDeviceTotalSharedMemory = totalSharedMemory
+            viablePhysicalDeviceSupportScore = supportScore
+            viablePhysicalDeviceDriverPreferred = driverPreferred
+            continue
+        } else if viablePhysicalDeviceDriverPreferred && !driverPreferred {
+            continue
+        }
+
+        goalDeviceType: vk.PhysicalDeviceType
+        if lowPower {
+            goalDeviceType = .INTEGRATED_GPU
+        } else {
+            goalDeviceType = .DISCRETE_GPU
+        }
+        
+        if properties2.properties.deviceType == goalDeviceType && viablePhysicalDeviceProperties.deviceType != goalDeviceType {
+            _log(this, .Verbose, "Prefer physical device %s over previously viable physical device %s", cstring(&properties2.properties.deviceName[0]), cstring(&viablePhysicalDeviceProperties.deviceName[0]))
+            viablePhysicalDevice = pd
+            viablePhysicalDeviceProperties = properties2.properties
+            viablePhysicalDeviceTotalPrivateMemory = totalPrivateMemory
+            viablePhysicalDeviceTotalSharedMemory = totalSharedMemory
+            viablePhysicalDeviceSupportScore = supportScore
+            viablePhysicalDeviceDriverPreferred = driverPreferred
+            continue
+        }
+
+        if properties2.properties.deviceType != goalDeviceType && viablePhysicalDeviceProperties.deviceType == goalDeviceType {
+            continue
+        }
+
+        if supportScore > viablePhysicalDeviceSupportScore {
+            _log(this, .Verbose, "Prefer physical device %s over previously viable physical device %s", cstring(&properties2.properties.deviceName[0]), cstring(&viablePhysicalDeviceProperties.deviceName[0]))
+            viablePhysicalDevice = pd
+            viablePhysicalDeviceProperties = properties2.properties
+            viablePhysicalDeviceTotalPrivateMemory = totalPrivateMemory
+            viablePhysicalDeviceTotalSharedMemory = totalSharedMemory
+            viablePhysicalDeviceSupportScore = supportScore
+            viablePhysicalDeviceDriverPreferred = driverPreferred
+            continue
+        }
+
+        if totalPrivateMemory > viablePhysicalDeviceTotalPrivateMemory {
+            _log(this, .Verbose, "Prefer physical device %s over previously viable physical device %s", cstring(&properties2.properties.deviceName[0]), cstring(&viablePhysicalDeviceProperties.deviceName[0]))
+            viablePhysicalDevice = pd
+            viablePhysicalDeviceProperties = properties2.properties
+            viablePhysicalDeviceTotalPrivateMemory = totalPrivateMemory
+            viablePhysicalDeviceTotalSharedMemory = totalSharedMemory
+            viablePhysicalDeviceSupportScore = supportScore
+            viablePhysicalDeviceDriverPreferred = driverPreferred
+            continue
+        }
+    }
+
+    if viablePhysicalDevice == nil {
+        _log(this, .Fatal, "No suitable physical device found")
+        return false
+    }
+
+    _log(this, .Verbose, "Selected physical device %s", cstring(&viablePhysicalDeviceProperties.deviceName[0]))
+    
+    /* logical device creation */
+    availablePhysicalDeviceExtensionPropertiesCount: u32
+    if this._instance.enumerateDeviceExtensionProperties(viablePhysicalDevice, nil, &availablePhysicalDeviceExtensionPropertiesCount, nil) != .SUCCESS {
+        _log(this, .Fatal, "Failed to enumerate over chosen physical device extensions")
+        return false
+    }
+    
+    resize(&availablePhysicalDeviceExtensionPropeties, availablePhysicalDeviceExtensionPropertiesCount)
+    if this._instance.enumerateDeviceExtensionProperties(viablePhysicalDevice, nil, &availablePhysicalDeviceExtensionPropertiesCount, &availablePhysicalDeviceExtensionPropeties[0]) != .SUCCESS {
+        _log(this, .Fatal, "Failed to enumerate over chosen physical device extensions")
+        return false
+    }
+
+    next = nil
+
+    enabledDeviceExtensions := make([dynamic]cstring)
+    defer delete(enabledDeviceExtensions)
+
+    dynamicRenderingFeatures := vk.PhysicalDeviceDynamicRenderingFeaturesKHR {
+        sType = .PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
+        dynamicRendering = true,
+    }
+
+    swapchainMaintenance1Features := vk.PhysicalDeviceSwapchainMaintenance1FeaturesEXT {
+        sType = .PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT,
+        swapchainMaintenance1 = true,
+    }
+
+    pageableDeviceLocalMemoryFeatures := vk.PhysicalDevicePageableDeviceLocalMemoryFeaturesEXT {
+        sType = .PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT,
+        pageableDeviceLocalMemory = true,
+    }
+
+    memoryPriorityFeatures := vk.PhysicalDeviceMemoryPriorityFeaturesEXT {
+        sType = .PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT,
+        memoryPriority = true,
+    }
+
+    for &extensionProperties in availablePhysicalDeviceExtensionPropeties {
+        if !headless {
+            if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_swapchain") == 0 {
+                append(&enabledDeviceExtensions, cstring(&extensionProperties.extensionName[0]))
+            } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_EXT_swapchain_maintenance1") == 0 {
+                swapchainMaintenance1Features.pNext = next
+                next = &swapchainMaintenance1Features
+
+                append(&enabledDeviceExtensions, cstring(&extensionProperties.extensionName[0]))
+            }
+        }
+
+        if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_dynamic_rendering") == 0 {
+            dynamicRenderingFeatures.pNext = next
+            next = &dynamicRenderingFeatures
+
+            append(&enabledDeviceExtensions, cstring(&extensionProperties.extensionName[0]))
+        } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_EXT_memory_priority") == 0 {
+            memoryPriorityFeatures.pNext = next
+            next = &memoryPriorityFeatures
+
+            append(&enabledDeviceExtensions, cstring(&extensionProperties.extensionName[0]))
+        } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_EXT_pageable_device_local_memory") == 0 {
+            pageableDeviceLocalMemoryFeatures.pNext = next
+            next = &pageableDeviceLocalMemoryFeatures
+
+            append(&enabledDeviceExtensions, cstring(&extensionProperties.extensionName[0]))
+        } else if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_KHR_portability_subset") == 0 {
+            append(&enabledDeviceExtensions, cstring(&extensionProperties.extensionName[0]))
+        }
+    }
+
+    physicalDeviceQueueFamilyPropertiesCount: u32
+    this._instance.getPhysicalDeviceQueueFamilyProperties(viablePhysicalDevice, &physicalDeviceQueueFamilyPropertiesCount, nil)
+
+    physicalDeviceQueueFamilyProperties := make([]vk.QueueFamilyProperties, physicalDeviceQueueFamilyPropertiesCount)
+    this._instance.getPhysicalDeviceQueueFamilyProperties(viablePhysicalDevice, &physicalDeviceQueueFamilyPropertiesCount, &physicalDeviceQueueFamilyProperties[0])
+
+    preferredGeneralQueueFamily := max(u32)
+    preferredPresentQueueFamily := max(u32)
+    preferredGraphicsQueueFamily := max(u32)
+    preferredTransferQueueFamily := max(u32)
+    preferredComputeQueueFamily := max(u32)
+
+    preferredGeneralScore := min(int)
+    preferredPresentScore := min(int)
+    preferredGraphicsScore := min(int)
+    preferredTransferScore := min(int)
+    preferredComputeScore := min(int)
+
+    for i in 0..<u32(len(physicalDeviceQueueFamilyProperties)) {
+        queueProperties := &physicalDeviceQueueFamilyProperties[i]
+        generalScore, presentScore, graphicsScore, transferScore, computeScore: int
+        if .GRAPHICS in queueProperties.queueFlags {
+            generalScore += 1
+            graphicsScore += 1
+            transferScore -= 1
+            computeScore -= 1
+        }
+
+        if .COMPUTE in queueProperties.queueFlags {
+            generalScore += 1
+            graphicsScore -= 1
+            transferScore -= 1
+            computeScore += 1
+        }
+
+        if .TRANSFER in queueProperties.queueFlags {
+            generalScore += 1
+            graphicsScore -= 1
+            transferScore += 1
+            computeScore -= 1
+        }
+
+        if !this._headless {
+            for _, wsi in this._wsis {
+                supported: b32
+                if this._instance.khr.surface.getPhysicalDeviceSurfaceSupport(viablePhysicalDevice, i, wsi.surface, &supported) != .SUCCESS {
+                    _log(this, .Fatal, "Failed to get Vulkan physical device surface support for queued window")
+                    return false
+                }
+
+                presentScore += supported ? 1 : 0
+            }
+        }
+
+        if generalScore > preferredGeneralScore {
+            preferredGeneralScore = generalScore
+            preferredGeneralQueueFamily = i
+        }
+
+        if presentScore > preferredPresentScore {
+            preferredPresentScore = presentScore
+            preferredPresentQueueFamily = i
+        }
+
+        if graphicsScore > preferredGraphicsScore {
+            preferredGraphicsScore = graphicsScore
+            preferredGraphicsQueueFamily = i
+        }
+
+        if transferScore > preferredTransferScore {
+            preferredTransferScore = transferScore
+            preferredTransferQueueFamily = i
+        }
+
+        if computeScore > preferredComputeScore {
+            preferredComputeScore = computeScore
+            preferredComputeQueueFamily = i
+        }
+    }
+
+    if preferredGeneralQueueFamily == max(u32) {
+        preferredGeneralQueueFamily = 0
+    }
+
+    if preferredPresentQueueFamily == max(u32) {
+        preferredPresentQueueFamily = preferredGeneralQueueFamily
+    }
+
+    if preferredGraphicsQueueFamily == max(u32) {
+        preferredGraphicsQueueFamily = preferredGeneralQueueFamily
+    }
+
+    if preferredTransferQueueFamily == max(u32) {
+        preferredTransferQueueFamily = preferredGeneralQueueFamily
+    }
+
+    if preferredComputeQueueFamily == max(u32) {
+        preferredComputeQueueFamily = preferredGeneralQueueFamily
+    }
+
+    queuePriorities := []f32 { 1.0, 1.0, 1.0, 1.0, 1.0 }
+    deviceQueueCIs := make([dynamic]vk.DeviceQueueCreateInfo)
+
+    addDeviceQueueCI := proc(queueFamilyProperties: []vk.QueueFamilyProperties, deviceQueueCIs: ^[dynamic]vk.DeviceQueueCreateInfo, queuePriorities: [^]f32, family: u32) -> u32 {
+        for &ci in deviceQueueCIs {
+            if ci.queueFamilyIndex == family {
+                if ci.queueCount + 1 < queueFamilyProperties[ci.queueFamilyIndex].queueCount {
+                    ci.queueCount += 1
+                    return ci.queueCount - 1
+                } else {
+                    return 0
+                }
+            }
+        }
+
+        append(deviceQueueCIs, vk.DeviceQueueCreateInfo {
+            sType = .DEVICE_QUEUE_CREATE_INFO,
+            queueFamilyIndex = family,
+            queueCount = 1,
+            pQueuePriorities = queuePriorities,
+        })
+
+        return 0
+    }
+
+    generalQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredGeneralQueueFamily)
+    presentQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredPresentQueueFamily)
+    graphicsQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredGraphicsQueueFamily)
+    transferQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredTransferQueueFamily)
+    computeQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredComputeQueueFamily)
+
+    availablePhysicalDeviceFeatures: vk.PhysicalDeviceFeatures
+    this._instance.getPhysicalDeviceFeatures(viablePhysicalDevice, &availablePhysicalDeviceFeatures)
+
+    enabledFeatures := vk.PhysicalDeviceFeatures {
+        shaderUniformBufferArrayDynamicIndexing = availablePhysicalDeviceFeatures.shaderUniformBufferArrayDynamicIndexing,
+        shaderSampledImageArrayDynamicIndexing = availablePhysicalDeviceFeatures.shaderSampledImageArrayDynamicIndexing,
+        shaderStorageBufferArrayDynamicIndexing = availablePhysicalDeviceFeatures.shaderStorageBufferArrayDynamicIndexing,
+        shaderStorageImageArrayDynamicIndexing = availablePhysicalDeviceFeatures.shaderStorageImageArrayDynamicIndexing,
+    }
+
+    deviceCI := vk.DeviceCreateInfo {
+        sType = .DEVICE_CREATE_INFO,
+        pNext = next,
+        flags = {},
+        queueCreateInfoCount = u32(len(deviceQueueCIs)),
+        pQueueCreateInfos = &deviceQueueCIs[0],
+        enabledLayerCount = 0,
+        ppEnabledLayerNames = nil,
+        enabledExtensionCount = u32(len(enabledDeviceExtensions)),
+        ppEnabledExtensionNames = len(enabledDeviceExtensions) == 0 ? nil : &enabledDeviceExtensions[0],
+        pEnabledFeatures = &enabledFeatures,
+    }
+
+    this._device.physical = viablePhysicalDevice
+    if this._instance.createDevice(this._device.physical, &deviceCI, this._allocator, &this._device.logical) != .SUCCESS {
+        _log(this, .Fatal, "Failed to create Vulkan logical device using physical device %s", cstring(&viablePhysicalDeviceProperties.deviceName[0]))
+        return false
+    }
+
+    /* loading logical device function pointers */
+    if !loadVulkanDeviceFunctions(this._device.logical, this._instance.getDeviceProcAddr, &this._device.deviceFunctionPointers) {
+        _log(this, .Fatal, "Failed to load Vulkan logical device function pointers")
+        return false
+    }
+
+    if !loadVulkanDevice11Functions(this._device.logical, this._instance.getDeviceProcAddr, &this._device.device11FunctionsPointers) {
+        _log(this, .Fatal, "Failed to load Vulkan 1.1 logical device function pointers")
+        return false
+    }
+
+    if !loadVulkanDevice12Functions(this._device.logical, this._instance.getDeviceProcAddr, &this._device.device12FunctionsPointers) {
+        _log(this, .Fatal, "Failed to load Vulkan 1.2 logical device function pointers")
+        return false
+    }
+
+    if !loadVulkanDeviceSwapchainKHRFunctions(this._device.logical, this._instance.getDeviceProcAddr, &this._device.khr.swapchain) && !headless {
+        _log(this, .Fatal, "Failed to load Vulkan swapchain function pointers required for non-headless mode")
+        return false
+    }
+
+    if !loadVulkanDeviceDynamicRenderingKHRFunctions(this._device.logical, this._instance.getDeviceProcAddr, &this._device.khr.dynamicRendering) {
+        _log(this, .Warning, "Failed to load Vulkan dynamic rendering function pointers which is recommended for use")
+    }
+
+    /* get queues */
+    this._generalQueue = {
+        family = preferredGeneralQueueFamily,
+        index = generalQueueIndex,
+    }
+
+    this._presentQueue = {
+        family = preferredPresentQueueFamily,
+        index = presentQueueIndex,
+    }
+
+    this._graphicsQueue = {
+        family = preferredGraphicsQueueFamily,
+        index = graphicsQueueIndex,
+    }
+
+    this._transferQueue = {
+        family = preferredTransferQueueFamily,
+        index = transferQueueIndex,
+    }
+
+    this._computeQueue = {
+        family = preferredComputeQueueFamily,
+        index = computeQueueIndex,
+    }
+
+    this._device.getDeviceQueue(this._device.logical, this._generalQueue.family, this._generalQueue.index, &this._generalQueue.queue)
+    this._device.getDeviceQueue(this._device.logical, this._presentQueue.family, this._presentQueue.index, &this._presentQueue.queue)
+    this._device.getDeviceQueue(this._device.logical, this._graphicsQueue.family, this._graphicsQueue.index, &this._graphicsQueue.queue)
+    this._device.getDeviceQueue(this._device.logical, this._transferQueue.family, this._transferQueue.index, &this._transferQueue.queue)
+    this._device.getDeviceQueue(this._device.logical, this._computeQueue.family, this._computeQueue.index, &this._computeQueue.queue)
+
     return true
 }
 
@@ -511,6 +1227,22 @@ destroy :: proc "c" (this: ^Renderer) {
     }
 
     context = this._ctx
+    
+    if this._device.logical != nil {
+        if this._device.deviceWaitIdle != nil {
+            this._device.deviceWaitIdle(this._device.logical)
+        }
+    }
+
+    for _, wsi in this._wsis {
+        this._instance.khr.surface.destroySurface(this._instance.instance, wsi.surface, this._allocator)
+    }
+
+    if this._device.logical != nil {
+        if this._device.destroyDevice != nil {
+            this._device.destroyDevice(this._device.logical, this._allocator)
+        }
+    }
 
     if this._instance.instance != nil {
         if this._instance.destroyInstance != nil {
@@ -521,27 +1253,46 @@ destroy :: proc "c" (this: ^Renderer) {
     if this._library != nil && this._library != VULKAN_LOADER_DEFAULT_HANDLE {
         dynlib.unload_library(this._library)
     }
+
+    /* cleanup containers */
+    delete(this._wsis)
+
+    if this._buffers != nil {
+        free(this._buffers)
+    }
 }
 
-createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WSISetting.DontCare) -> krfw.WSIHandle {
+createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WSISetting.DontCare) -> b32 {
     if this == nil {
-        return krfw.WSI_HANDLE_INVALID
+        return false
     }
 
     context = this._ctx
-    return krfw.WSI_HANDLE_INVALID
+
+    if this._instance.instance == nil {
+        if !this._areWindowsQueued {
+            this._areWindowsQueued = true
+            this._queuedWindows = make([dynamic]krfw.Window)
+        }
+
+        append(&this._queuedWindows, window^)
+        return true
+    }
+
+    return false
 }
 
-destroyWSI :: proc "c" (this: ^Renderer, handle: krfw.WSIHandle) {
+destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
     if this == nil {
         return
     }
 
     context = this._ctx
     
+
 }
 
-executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^krfw.IPass, wsiHandle := krfw.WSI_HANDLE_INVALID) -> b32 {
+executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^krfw.IPass, window: ^krfw.Window) -> b32 {
     if this == nil {
         return false
     }

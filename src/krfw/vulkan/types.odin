@@ -15,9 +15,10 @@ InstanceEXTFunctions :: struct {
 }
 
 InstanceFunctions :: struct {
-    using instanceFunctionPointers: InstanceFunctionPointers,
-    khr:                            InstanceKHRFunctions,
-    ext:                            InstanceEXTFunctions,
+    using instanceFunctionPointers:     InstanceFunctionPointers,
+    using instance11FunctionPointers:   Instance11FunctionPointers,
+    khr:                                InstanceKHRFunctions,
+    ext:                                InstanceEXTFunctions,
 }
 
 Instance :: struct {
@@ -35,15 +36,23 @@ DeviceEXTFunctions :: struct {
 }
 
 DeviceFunctions :: struct {
-    using deviceFunctionPointers:   DeviceFunctionPointers,
-    khr:                            DeviceKHRFunctions,
-    ext:                            DeviceEXTFunctions,
+    using deviceFunctionPointers:       DeviceFunctionPointers,
+    using device11FunctionsPointers:    Device11FunctionPointers,
+    using device12FunctionsPointers:    Device12FunctionPointers,
+    khr:                                DeviceKHRFunctions,
+    ext:                                DeviceEXTFunctions,
 }
 
 Device :: struct {
     physical:   vk.PhysicalDevice,
     logical:    vk.Device,
     using _:    DeviceFunctions,
+}
+
+Queue :: struct {
+    queue:  vk.Queue,
+    family: u32,
+    index:  u32,
 }
 
 SubmitInfoWait :: struct {
@@ -73,6 +82,15 @@ PassVTable :: struct {
     execute: ProcPassExecute,
 }
 
+RendererBuffers :: struct {
+    _debugLoggerBuffer: [2048]u8,
+    _driverPreference:  [vk.MAX_DRIVER_NAME_SIZE]u8,
+}
+
+WSI :: struct {
+    surface: vk.SurfaceKHR,
+}
+
 Renderer :: struct {
     /* inherited components */
     using irenderer:    krfw.IRenderer,
@@ -81,24 +99,44 @@ Renderer :: struct {
     /* pre-init members */
     _debugLogger:               krfw.ProcDebugLogger,
     _debugLoggerLowestSeverity: krfw.DebugSeverity,
-    _debugLoggerBuffer:         [2048]u8,
     _ctx:                       runtime.Context,
     _library:                   dynlib.Library,
     _globalFunctions:           GlobalFunctionPointers,
+    using _buffers:             ^RendererBuffers,
 
+    /* pre-init, destroyed at the end of init */
+    _areWindowsQueued:  bool,
+    _queuedWindows:     [dynamic]krfw.Window,
+
+    /* init members */
     _headless:  bool,
     _debug:     bool,
     _allocator: ^vk.AllocationCallbacks,
     _instance:  Instance,
+    _wsis:      map[krfw.Window]WSI,
     _device:    Device,
+
+    /* note: queues may be aliases of one another */
+    _generalQueue:  Queue,
+    _presentQueue:  Queue,
+    _graphicsQueue: Queue,
+    _transferQueue: Queue,
+    _computeQueue:  Queue,
 }
 
+/* pre-init functions */
 ProcRendererLoadVulkanLoaderOdin    :: #type proc "c" (this: ^Renderer, path: string) -> b32
-ProcRendererLoadVulkanLoader        :: #type proc "c" (this: ^Renderer, len: u32, path: [^]u8) -> b32
-ProcRendererLoadVulkanLoaderUnicode :: #type proc "c" (this: ^Renderer, len: u32, path: [^]rune) -> b32
+ProcRendererLoadVulkanLoader        :: #type proc "c" (this: ^Renderer, len: u32, path: cstring) -> b32
+ProcRendererLoadVulkanLoaderUTF32   :: #type proc "c" (this: ^Renderer, len: u32, path: [^]rune) -> b32
+
+ProcRendererSetDriverPreferenceOdin :: #type proc "c" (this: ^Renderer, driver: string)
+ProcRendererSetDriverPreference     :: #type proc "c" (this: ^Renderer, len: u32, driver: cstring)
 
 RendererVTable :: struct {
     loadVulkanLoaderOdin:       ProcRendererLoadVulkanLoaderOdin,
     loadVulkanLoader:           ProcRendererLoadVulkanLoader,
-    loadVulkanLoaderUnicode:    ProcRendererLoadVulkanLoaderUnicode,
+    loadVulkanLoaderUnicode:    ProcRendererLoadVulkanLoaderUTF32,
+
+    setDriverPreferenceOdin:    ProcRendererSetDriverPreferenceOdin,
+    setDriverPreference:        ProcRendererSetDriverPreference,
 }

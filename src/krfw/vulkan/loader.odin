@@ -44,6 +44,8 @@ InstanceFunctionPointers :: struct {
     getDeviceProcAddr:                      vk.ProcGetDeviceProcAddr,
     destroyInstance:                        vk.ProcDestroyInstance,
     enumeratePhysicalDevices:               vk.ProcEnumeratePhysicalDevices,
+    enumerateDeviceExtensionProperties:     vk.ProcEnumerateDeviceExtensionProperties,
+    enumerateDeviceLayerProperties:         vk.ProcEnumerateDeviceLayerProperties,
     getPhysicalDeviceFeatures:              vk.ProcGetPhysicalDeviceFeatures,
     getPhysicalDeviceFormatProperties:      vk.ProcGetPhysicalDeviceFormatProperties,
     getPhysicalDeviceImageFormatProperties: vk.ProcGetPhysicalDeviceImageFormatProperties,
@@ -71,6 +73,16 @@ loadVulkanInstanceFunctions :: proc "c" (instance: vk.Instance, getInstanceProcA
 
     functions.enumeratePhysicalDevices = vk.ProcEnumeratePhysicalDevices(getInstanceProcAddr(instance, "vkEnumeratePhysicalDevices"))
     if functions.enumeratePhysicalDevices == nil {
+        return false
+    }
+
+    functions.enumerateDeviceExtensionProperties = vk.ProcEnumerateDeviceExtensionProperties(getInstanceProcAddr(instance, "vkEnumerateDeviceExtensionProperties"))
+    if functions.enumerateDeviceExtensionProperties == nil {
+        return false
+    }
+
+    functions.enumerateDeviceLayerProperties = vk.ProcEnumerateDeviceLayerProperties(getInstanceProcAddr(instance, "vkEnumerateDeviceLayerProperties"))
+    if functions.enumerateDeviceLayerProperties == nil {
         return false
     }
 
@@ -109,6 +121,89 @@ loadVulkanInstanceFunctions :: proc "c" (instance: vk.Instance, getInstanceProcA
         return false
     }
     
+    return true
+}
+
+Instance11FunctionPointers :: struct {
+    enumerateInstanceVersion:                       vk.ProcEnumerateInstanceVersion,
+    enumeratePhysicalDeviceGroups:                  vk.ProcEnumeratePhysicalDeviceGroups,
+    getPhysicalDeviceExternalBufferProperties:      vk.ProcGetPhysicalDeviceExternalBufferProperties,
+    getPhysicalDeviceExternalFenceProperties:       vk.ProcGetPhysicalDeviceExternalFenceProperties,
+    getPhysicalDeviceExternalSemaphoreProperties:   vk.ProcGetPhysicalDeviceExternalSemaphoreProperties,
+    getPhysicalDeviceFeatures2:                     vk.ProcGetPhysicalDeviceFeatures2,
+    getPhysicalDeviceFormatProperties2:             vk.ProcGetPhysicalDeviceFormatProperties2,
+    getPhysicalDeviceImageFormatProperties2:        vk.ProcGetPhysicalDeviceImageFormatProperties2,
+    getPhysicalDeviceMemoryProperties2:             vk.ProcGetPhysicalDeviceMemoryProperties2,
+    getPhysicalDeviceProperties2:                   vk.ProcGetPhysicalDeviceProperties2,
+    getPhysicalDeviceQueueFamilyProperties2:        vk.ProcGetPhysicalDeviceQueueFamilyProperties2,
+    getPhysicalDeviceSparseImageFormatProperties2:  vk.ProcGetPhysicalDeviceSparseImageFormatProperties2,
+}
+
+loadVulkanInstance11Functions :: proc "c" (instance: vk.Instance, getInstanceProcAddr: vk.ProcGetInstanceProcAddr, functions: ^Instance11FunctionPointers) -> b32 {
+    if instance == nil || getInstanceProcAddr == nil || functions == nil {
+        return false
+    }
+
+    functions.enumerateInstanceVersion = vk.ProcEnumerateInstanceVersion(getInstanceProcAddr(instance, "vkEnumerateInstanceVersion"))
+    if functions.enumerateInstanceVersion == nil {
+        return false
+    }
+
+    functions.enumeratePhysicalDeviceGroups = vk.ProcEnumeratePhysicalDeviceGroups(getInstanceProcAddr(instance, "vkEnumeratePhysicalDeviceGroups"))
+    if functions.enumeratePhysicalDeviceGroups == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceExternalBufferProperties = vk.ProcGetPhysicalDeviceExternalBufferProperties(getInstanceProcAddr(instance, "vkGetPhysicalDeviceExternalBufferProperties"))
+    if functions.getPhysicalDeviceExternalBufferProperties == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceExternalFenceProperties = vk.ProcGetPhysicalDeviceExternalFenceProperties(getInstanceProcAddr(instance, "vkGetPhysicalDeviceExternalFenceProperties"))
+    if functions.getPhysicalDeviceExternalFenceProperties == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceExternalSemaphoreProperties = vk.ProcGetPhysicalDeviceExternalSemaphoreProperties(getInstanceProcAddr(instance, "vkGetPhysicalDeviceExternalSemaphoreProperties"))
+    if functions.getPhysicalDeviceExternalSemaphoreProperties == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceFeatures2 = vk.ProcGetPhysicalDeviceFeatures2(getInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2"))
+    if functions.getPhysicalDeviceFeatures2 == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceFormatProperties2 = vk.ProcGetPhysicalDeviceFormatProperties2(getInstanceProcAddr(instance, "vkGetPhysicalDeviceFormatProperties2"))
+    if functions.getPhysicalDeviceFormatProperties2 == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceImageFormatProperties2 = vk.ProcGetPhysicalDeviceImageFormatProperties2(getInstanceProcAddr(instance, "vkGetPhysicalDeviceImageFormatProperties2"))
+    if functions.getPhysicalDeviceImageFormatProperties2 == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceMemoryProperties2 = vk.ProcGetPhysicalDeviceMemoryProperties2(getInstanceProcAddr(instance, "vkGetPhysicalDeviceMemoryProperties2"))
+    if functions.getPhysicalDeviceMemoryProperties2 == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceProperties2 = vk.ProcGetPhysicalDeviceProperties2(getInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties2"))
+    if functions.getPhysicalDeviceProperties2 == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceQueueFamilyProperties2 = vk.ProcGetPhysicalDeviceQueueFamilyProperties2(getInstanceProcAddr(instance, "vkGetPhysicalDeviceQueueFamilyProperties2"))
+    if functions.getPhysicalDeviceQueueFamilyProperties2 == nil {
+        return false
+    }
+
+    functions.getPhysicalDeviceSparseImageFormatProperties2 = vk.ProcGetPhysicalDeviceSparseImageFormatProperties2(getInstanceProcAddr(instance, "vkGetPhysicalDeviceSparseImageFormatProperties2"))
+    if functions.getPhysicalDeviceSparseImageFormatProperties2 == nil {
+        return false
+    }
+
     return true
 }
 
@@ -961,6 +1056,202 @@ loadVulkanDeviceFunctions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.
     return true
 }
 
+Device11FunctionPointers :: struct {
+    bindBufferMemory2:                              vk.ProcBindBufferMemory2,
+    bindImageMemory2:                               vk.ProcBindImageMemory2,
+    cmdDispatchBase:                                vk.ProcCmdDispatchBase,
+    cmdSetDeviceMask:                               vk.ProcCmdSetDeviceMask,
+    createDescriptorUpdateTemplate:                 vk.ProcCreateDescriptorUpdateTemplate,
+    createSamplerYcbcrConversion:                   vk.ProcCreateSamplerYcbcrConversion,
+    destroyDescriptorUpdateTemplate:                vk.ProcDestroyDescriptorUpdateTemplate,
+    destroySamplerYcbcrConversion:                  vk.ProcDestroySamplerYcbcrConversion,
+    getBufferMemoryRequirements2:                   vk.ProcGetBufferMemoryRequirements2,
+    getDescriptorSetLayoutSupport:                  vk.ProcGetDescriptorSetLayoutSupport,
+    getDeviceGroupPeerMemoryFeatures:               vk.ProcGetDeviceGroupPeerMemoryFeatures,
+    getDeviceQueue2:                                vk.ProcGetDeviceQueue2,
+    getImageMemoryRequirements2:                    vk.ProcGetImageMemoryRequirements2,
+    getImageSparseMemoryRequirements2:              vk.ProcGetImageSparseMemoryRequirements2,
+    trimCommandPool:                                vk.ProcTrimCommandPool,
+    updateDescriptorSetWithTemplate:                vk.ProcUpdateDescriptorSetWithTemplate,
+}
+
+loadVulkanDevice11Functions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.ProcGetDeviceProcAddr, functions: ^Device11FunctionPointers) -> b32 {
+    if device == nil || getDeviceProcAddr == nil || functions == nil {
+        return false
+    }
+
+    functions.bindBufferMemory2 = vk.ProcBindBufferMemory2(getDeviceProcAddr(device, "vkBindBufferMemory2"))
+    if functions.bindBufferMemory2 == nil {
+        return false
+    }
+
+    functions.bindImageMemory2 = vk.ProcBindImageMemory2(getDeviceProcAddr(device, "vkBindImageMemory2"))
+    if functions.bindImageMemory2 == nil {
+        return false
+    }
+
+    functions.cmdDispatchBase = vk.ProcCmdDispatchBase(getDeviceProcAddr(device, "vkCmdDispatchBase"))
+    if functions.cmdDispatchBase == nil {
+        return false
+    }
+
+    functions.cmdSetDeviceMask = vk.ProcCmdSetDeviceMask(getDeviceProcAddr(device, "vkCmdSetDeviceMask"))
+    if functions.cmdSetDeviceMask == nil {
+        return false
+    }
+
+    functions.createDescriptorUpdateTemplate = vk.ProcCreateDescriptorUpdateTemplate(getDeviceProcAddr(device, "vkCreateDescriptorUpdateTemplate"))
+    if functions.createDescriptorUpdateTemplate == nil {
+        return false
+    }
+
+    functions.createSamplerYcbcrConversion = vk.ProcCreateSamplerYcbcrConversion(getDeviceProcAddr(device, "vkCreateSamplerYcbcrConversion"))
+    if functions.createSamplerYcbcrConversion == nil {
+        return false
+    }
+
+    functions.destroyDescriptorUpdateTemplate = vk.ProcDestroyDescriptorUpdateTemplate(getDeviceProcAddr(device, "vkDestroyDescriptorUpdateTemplate"))
+    if functions.destroyDescriptorUpdateTemplate == nil {
+        return false
+    }
+
+    functions.destroySamplerYcbcrConversion = vk.ProcDestroySamplerYcbcrConversion(getDeviceProcAddr(device, "vkDestroySamplerYcbcrConversion"))
+    if functions.destroySamplerYcbcrConversion == nil {
+        return false
+    }
+
+    functions.getBufferMemoryRequirements2 = vk.ProcGetBufferMemoryRequirements2(getDeviceProcAddr(device, "vkGetBufferMemoryRequirements2"))
+    if functions.getBufferMemoryRequirements2 == nil {
+        return false
+    }
+
+    functions.getDescriptorSetLayoutSupport = vk.ProcGetDescriptorSetLayoutSupport(getDeviceProcAddr(device, "vkGetDescriptorSetLayoutSupport"))
+    if functions.getDescriptorSetLayoutSupport == nil {
+        return false
+    }
+
+    functions.getDeviceGroupPeerMemoryFeatures = vk.ProcGetDeviceGroupPeerMemoryFeatures(getDeviceProcAddr(device, "vkGetDeviceGroupPeerMemoryFeatures"))
+    if functions.getDeviceGroupPeerMemoryFeatures == nil {
+        return false
+    }
+
+    functions.getDeviceQueue2 = vk.ProcGetDeviceQueue2(getDeviceProcAddr(device, "vkGetDeviceQueue2"))
+    if functions.getDeviceQueue2 == nil {
+        return false
+    }
+
+    functions.getImageMemoryRequirements2 = vk.ProcGetImageMemoryRequirements2(getDeviceProcAddr(device, "vkGetImageMemoryRequirements2"))
+    if functions.getImageMemoryRequirements2 == nil {
+        return false
+    }
+
+    functions.getImageSparseMemoryRequirements2 = vk.ProcGetImageSparseMemoryRequirements2(getDeviceProcAddr(device, "vkGetImageSparseMemoryRequirements2"))
+    if functions.getImageSparseMemoryRequirements2 == nil {
+        return false
+    }
+
+    functions.trimCommandPool = vk.ProcTrimCommandPool(getDeviceProcAddr(device, "vkTrimCommandPool"))
+    if functions.trimCommandPool == nil {
+        return false
+    }
+
+    functions.updateDescriptorSetWithTemplate = vk.ProcUpdateDescriptorSetWithTemplate(getDeviceProcAddr(device, "vkUpdateDescriptorSetWithTemplate"))
+    if functions.updateDescriptorSetWithTemplate == nil {
+        return false
+    }
+
+    return true
+}
+
+Device12FunctionPointers :: struct {
+    cmdBeginRenderPass2:                    vk.ProcCmdBeginRenderPass2,
+    cmdDrawIndexedIndirectCount:            vk.ProcCmdDrawIndexedIndirectCount,
+    cmdDrawIndirectCount:                   vk.ProcCmdDrawIndirectCount,
+    cmdEndRenderPass2:                      vk.ProcCmdEndRenderPass2,
+    cmdNextSubpass2:                        vk.ProcCmdNextSubpass2,
+    createRenderPass2:                      vk.ProcCreateRenderPass2,
+    getBufferDeviceAddress:                 vk.ProcGetBufferDeviceAddress,
+    getBufferOpaqueCaptureAddress:          vk.ProcGetBufferOpaqueCaptureAddress,
+    getDeviceMemoryOpaqueCaptureAddress:    vk.ProcGetDeviceMemoryOpaqueCaptureAddress,
+    getSemaphoreCounterValue:               vk.ProcGetSemaphoreCounterValue,
+    resetQueryPool:                         vk.ProcResetQueryPool,
+    signalSemaphore:                        vk.ProcSignalSemaphore,
+    waitSemaphores:                         vk.ProcWaitSemaphores,
+}
+
+loadVulkanDevice12Functions :: proc "c" (device: vk.Device, getDeviceProcAddr: vk.ProcGetDeviceProcAddr, functions: ^Device12FunctionPointers) -> b32 {
+    if device == nil || getDeviceProcAddr == nil || functions == nil {
+        return false
+    }
+
+    functions.cmdBeginRenderPass2 = vk.ProcCmdBeginRenderPass2(getDeviceProcAddr(device, "vkCmdBeginRenderPass2"))
+    if functions.cmdBeginRenderPass2 == nil {
+        return false
+    }
+
+    functions.cmdDrawIndexedIndirectCount = vk.ProcCmdDrawIndexedIndirectCount(getDeviceProcAddr(device, "vkCmdDrawIndexedIndirectCount"))
+    if functions.cmdDrawIndexedIndirectCount == nil {
+        return false
+    }
+
+    functions.cmdDrawIndirectCount = vk.ProcCmdDrawIndirectCount(getDeviceProcAddr(device, "vkCmdDrawIndirectCount"))
+    if functions.cmdDrawIndirectCount == nil {
+        return false
+    }
+
+    functions.cmdEndRenderPass2 = vk.ProcCmdEndRenderPass2(getDeviceProcAddr(device, "vkCmdEndRenderPass2"))
+    if functions.cmdEndRenderPass2 == nil {
+        return false
+    }
+
+    functions.cmdNextSubpass2 = vk.ProcCmdNextSubpass2(getDeviceProcAddr(device, "vkCmdNextSubpass2"))
+    if functions.cmdNextSubpass2 == nil {
+        return false
+    }
+
+    functions.createRenderPass2 = vk.ProcCreateRenderPass2(getDeviceProcAddr(device, "vkCreateRenderPass2"))
+    if functions.createRenderPass2 == nil {
+        return false
+    }
+
+    functions.getBufferDeviceAddress = vk.ProcGetBufferDeviceAddress(getDeviceProcAddr(device, "vkGetBufferDeviceAddress"))
+    if functions.getBufferDeviceAddress == nil {
+        return false
+    }
+
+    functions.getBufferOpaqueCaptureAddress = vk.ProcGetBufferOpaqueCaptureAddress(getDeviceProcAddr(device, "vkGetBufferOpaqueCaptureAddress"))
+    if functions.getBufferOpaqueCaptureAddress == nil {
+        return false
+    }
+
+    functions.getDeviceMemoryOpaqueCaptureAddress = vk.ProcGetDeviceMemoryOpaqueCaptureAddress(getDeviceProcAddr(device, "vkGetDeviceMemoryOpaqueCaptureAddress"))
+    if functions.getDeviceMemoryOpaqueCaptureAddress == nil {
+        return false
+    }
+
+    functions.getSemaphoreCounterValue = vk.ProcGetSemaphoreCounterValue(getDeviceProcAddr(device, "vkGetSemaphoreCounterValue"))
+    if functions.getSemaphoreCounterValue == nil {
+        return false
+    }
+
+    functions.resetQueryPool = vk.ProcResetQueryPool(getDeviceProcAddr(device, "vkResetQueryPool"))
+    if functions.resetQueryPool == nil {
+        return false
+    }
+
+    functions.signalSemaphore = vk.ProcSignalSemaphore(getDeviceProcAddr(device, "vkSignalSemaphore"))
+    if functions.signalSemaphore == nil {
+        return false
+    }
+
+    functions.waitSemaphores = vk.ProcWaitSemaphores(getDeviceProcAddr(device, "vkWaitSemaphores"))
+    if functions.waitSemaphores == nil {
+        return false
+    }
+
+    return true
+}
+
 DeviceSwapchainKHRFunctionPointers :: struct {
     createSwapchain:    vk.ProcCreateSwapchainKHR,
     destroySwapchain:   vk.ProcDestroySwapchainKHR,
@@ -1012,12 +1303,12 @@ loadVulkanDeviceDynamicRenderingKHRFunctions :: proc "c" (device: vk.Device, get
         return false
     }
 
-    functions.cmdBeginRendering = vk.ProcCmdBeginRendering(getDeviceProcAddr(device, "vkCmdBeginRendering"))
+    functions.cmdBeginRendering = vk.ProcCmdBeginRendering(getDeviceProcAddr(device, "vkCmdBeginRenderingKHR"))
     if functions.cmdBeginRendering == nil {
         return false
     }
 
-    functions.cmdEndRendering = vk.ProcCmdEndRendering(getDeviceProcAddr(device, "vkCmdEndRendering"))
+    functions.cmdEndRendering = vk.ProcCmdEndRendering(getDeviceProcAddr(device, "vkCmdEndRenderingKHR"))
     if functions.cmdEndRendering == nil {
         return false
     }

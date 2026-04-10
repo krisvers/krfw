@@ -22,22 +22,23 @@ main :: proc() {
     renderer: krfw_vk.Renderer
     krfw_vk.instantiateRenderer(&renderer)
 
-    pRenderer := &renderer
-    pRenderer->setDebugLogger(proc "c" (severity: krfw.DebugSeverity, originLen: u32, origin: cstring, messageLen: u32, message: cstring) {
+    renderer->setDebugLogger(proc "c" (severity: krfw.DebugSeverity, originLen: u32, origin: cstring, messageLen: u32, message: cstring) {
         context = runtime.default_context()
         fmt.printfln("[%s] (%s): %s", severity, origin, message)
     }, krfw.DebugSeverity.Verbose)
 
-    if !pRenderer->createWSI(&{
+    if !renderer->createWSI(&{
         nativeWindowHandle = sdl3.GetPointerProperty(sdl3.GetWindowProperties(window), sdl3.PROP_WINDOW_COCOA_WINDOW_POINTER, nil),
         nativeWindowType = .Cocoa,
     }, .Mailbox) {
         panic("Renderer create WSI")
     }
 
-    if !pRenderer->init(debug = true) {
+    if !renderer->init(debug = true) {
         panic("Failed to initialize renderer")
     }
+
+    fencePool := renderer->getDefaultFencePool()
 
     running := true
     for running {
@@ -50,10 +51,10 @@ main :: proc() {
         }
     }
 
-    pRenderer->destroyWSI(&{
+    renderer->destroyWSI(&{
         nativeWindowHandle = sdl3.Metal_CreateView(window),
         nativeWindowType = .Metal,
     })
 
-    pRenderer->destroy()
+    renderer->destroy()
 }

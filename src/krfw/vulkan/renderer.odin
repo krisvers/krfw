@@ -84,22 +84,29 @@ when ODIN_OS == .Windows {
 
 RENDERER := Renderer {
     /* inherited functions */
-    setDebugLogger  = krfw.ProcIRendererSetDebugLogger(setDebugLogger),
-    init            = krfw.ProcIRendererInit(init),
-    destroy         = krfw.ProcIRendererDestroy(destroy),
-    createWSI       = krfw.ProcIRendererCreateWSI(createWSI),
-    destroyWSI      = krfw.ProcIRendererDestroyWSI(destroyWSI),
-    executePasses   = krfw.ProcIRendererExecutePasses(executePasses),
+    setDebugLogger  = krfw.ProcIRendererSetDebugLogger(Renderer_setDebugLogger),
+    init            = krfw.ProcIRendererInit(Renderer_init),
+    destroy         = krfw.ProcIRendererDestroy(Renderer_destroy),
+    createWSI       = krfw.ProcIRendererCreateWSI(Renderer_createWSI),
+    destroyWSI      = krfw.ProcIRendererDestroyWSI(Renderer_destroyWSI),
+    executePasses   = krfw.ProcIRendererExecutePasses(Renderer_executePasses),
 
-    /* Vulkan backend specific functions */
-    loadVulkanLoaderOdin    = loadVulkanLoaderOdin,
-    loadVulkanLoader        = loadVulkanLoader,
-    loadVulkanLoaderUnicode = loadVulkanLoaderUnicode,
+    /* pre-init backend functions */
+    loadVulkanLoaderOdin    = Renderer_loadVulkanLoaderOdin,
+    loadVulkanLoader        = Renderer_loadVulkanLoader,
+    loadVulkanLoaderUnicode = Renderer_loadVulkanLoaderUnicode,
+    setDriverPreferenceOdin = Renderer_setDriverPreferenceOdin,
+    setDriverPreference     = Renderer_setDriverPreference,
+    setAllocator            = Renderer_setAllocator,
 
-    setDriverPreferenceOdin = setDriverPreferenceOdin,
-    setDriverPreference     = setDriverPreference,
+    /* Vulkan interface functions */
+    createFencePool         = Renderer_createFencePool,
+    createSemaphorePool     = Renderer_createSemaphorePool,
+    createCommandPool       = Renderer_createCommandPool,
 
-    setAllocator            = setAllocator,
+    getDefaultFencePool     = Renderer_getDefaultFencePool,
+    getDefaultSemaphorePool = Renderer_getDefaultSemaphorePool,
+    getDefaultCommandPool   = Renderer_getDefaultCommandPool,
 
     _ctx                = runtime.default_context(),
     _library            = VULKAN_LOADER_DEFAULT_HANDLE,
@@ -118,7 +125,7 @@ _logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: strin
     }
 
     if this._buffers == nil {
-        this._buffers = new(RendererBuffers)
+        this._buffers = new(_RendererBuffers)
     }
     
     nextAvailableResidentOffset := 0
@@ -303,7 +310,7 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
 }
 
 /* pre-init */
-setDebugLogger :: proc "c" (this: ^Renderer, logger: krfw.ProcDebugLogger, lowestSeverity := krfw.DebugSeverity.Warning) {
+Renderer_setDebugLogger :: proc "c" (this: ^Renderer, logger: krfw.ProcDebugLogger, lowestSeverity := krfw.DebugSeverity.Warning) {
     if this == nil {
         return
     }
@@ -314,7 +321,7 @@ setDebugLogger :: proc "c" (this: ^Renderer, logger: krfw.ProcDebugLogger, lowes
     this._debugLoggerLowestSeverity = lowestSeverity
 }
 
-loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
+Renderer_loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
     if this == nil {
         return false
     }
@@ -322,7 +329,7 @@ loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
     context = this._ctx
 
     if this._library != nil && this._library != VULKAN_LOADER_DEFAULT_HANDLE {
-        _log(this, krfw.DebugSeverity.Warning, "Cannot load Vulkan loader with new path: library already loaded")
+        _log(this, krfw.DebugSeverity.Warning, "Can't load Vulkan loader with new path: library already loaded")
         return false
     }
 
@@ -336,7 +343,7 @@ loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
     return true
 }
 
-loadVulkanLoader :: proc "c" (this: ^Renderer, len: u32, path: cstring) -> b32 {
+Renderer_loadVulkanLoader :: proc "c" (this: ^Renderer, len: u32, path: cstring) -> b32 {
     if this == nil {
         return false
     }
@@ -344,10 +351,10 @@ loadVulkanLoader :: proc "c" (this: ^Renderer, len: u32, path: cstring) -> b32 {
     context = this._ctx
 
     pathString := strings.string_from_ptr(transmute([^]u8)path, int(len))
-    return loadVulkanLoaderOdin(this, pathString)
+    return Renderer_loadVulkanLoaderOdin(this, pathString)
 }
 
-loadVulkanLoaderUnicode :: proc "c" (this: ^Renderer, len: u32, path: [^]rune) -> b32 {
+Renderer_loadVulkanLoaderUnicode :: proc "c" (this: ^Renderer, len: u32, path: [^]rune) -> b32 {
     if this == nil {
         return false
     }
@@ -357,10 +364,10 @@ loadVulkanLoaderUnicode :: proc "c" (this: ^Renderer, len: u32, path: [^]rune) -
     pathString := utf8.runes_to_string(path[:len], context.temp_allocator)
     defer delete(pathString, context.temp_allocator)
 
-    return loadVulkanLoaderOdin(this, pathString)
+    return Renderer_loadVulkanLoaderOdin(this, pathString)
 }
 
-setDriverPreferenceOdin :: proc "c" (this: ^Renderer, driver: string) {
+Renderer_setDriverPreferenceOdin :: proc "c" (this: ^Renderer, driver: string) {
     if this == nil {
         return
     }
@@ -368,7 +375,7 @@ setDriverPreferenceOdin :: proc "c" (this: ^Renderer, driver: string) {
     context = this._ctx
 
     if this._buffers == nil {
-        this._buffers = new(RendererBuffers)
+        this._buffers = new(_RendererBuffers)
     }
 
     if len(driver) >= vk.MAX_DRIVER_NAME_SIZE {
@@ -379,17 +386,17 @@ setDriverPreferenceOdin :: proc "c" (this: ^Renderer, driver: string) {
     this._driverPreference[min(len(driver), 4095) + 1] = 0
 }
 
-setDriverPreference :: proc "c" (this: ^Renderer, len: u32, driver: cstring) {
+Renderer_setDriverPreference :: proc "c" (this: ^Renderer, len: u32, driver: cstring) {
     if this == nil {
         return
     }
 
     context = this._ctx
 
-    setDriverPreferenceOdin(this, strings.string_from_ptr(transmute([^]u8)driver, int(len)))
+    Renderer_setDriverPreferenceOdin(this, strings.string_from_ptr(transmute([^]u8)driver, int(len)))
 }
 
-setAllocator :: proc "c" (this: ^Renderer, allocator: ^vk.AllocationCallbacks) {
+Renderer_setAllocator :: proc "c" (this: ^Renderer, allocator: ^vk.AllocationCallbacks) {
     if this == nil {
         return
     }
@@ -399,8 +406,8 @@ setAllocator :: proc "c" (this: ^Renderer, allocator: ^vk.AllocationCallbacks) {
     this._allocator = allocator
 }
 
-/* init and post-init */
-init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false), debug := b32(false)) -> b32 {
+/* IRenderer functions */
+Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false), debug := b32(false)) -> b32 {
     if this == nil {
         return false
     }
@@ -409,7 +416,7 @@ init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false
 
     /* setup containers */
     if this._buffers == nil {
-        this._buffers = new(RendererBuffers)
+        this._buffers = new(_RendererBuffers)
     }
 
     this._headless = bool(headless)
@@ -1204,11 +1211,18 @@ init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false
 
     queuePriorities := []f32 { 1.0, 1.0, 1.0, 1.0, 1.0 }
     deviceQueueCIs := make([dynamic]vk.DeviceQueueCreateInfo)
+    defer delete(deviceQueueCIs)
 
-    addDeviceQueueCI := proc(queueFamilyProperties: []vk.QueueFamilyProperties, deviceQueueCIs: ^[dynamic]vk.DeviceQueueCreateInfo, queuePriorities: [^]f32, family: u32) -> u32 {
-        for &ci in deviceQueueCIs {
+    deviceQueueIntendedTypes := make([dynamic]QueueTypeMask)
+    defer delete(deviceQueueIntendedTypes)
+
+    addDeviceQueueCI := proc(queueFamilyProperties: []vk.QueueFamilyProperties, deviceQueueCIs: ^[dynamic]vk.DeviceQueueCreateInfo, deviceQueueIntendedTypes: ^[dynamic]QueueTypeMask, queuePriorities: [^]f32, family: u32, intendedType: QueueType, uniqueQueueCount: ^u32) -> u32 {
+        for i in 0..<len(deviceQueueCIs) {
+            ci := &deviceQueueCIs[i]
             if ci.queueFamilyIndex == family {
+                deviceQueueIntendedTypes[i] |= { intendedType }
                 if ci.queueCount + 1 < queueFamilyProperties[ci.queueFamilyIndex].queueCount {
+                    uniqueQueueCount^ += 1
                     ci.queueCount += 1
                     return ci.queueCount - 1
                 } else {
@@ -1217,6 +1231,7 @@ init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false
             }
         }
 
+        uniqueQueueCount^ += 1
         append(deviceQueueCIs, vk.DeviceQueueCreateInfo {
             sType = .DEVICE_QUEUE_CREATE_INFO,
             queueFamilyIndex = family,
@@ -1224,14 +1239,46 @@ init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false
             pQueuePriorities = queuePriorities,
         })
 
+        append(deviceQueueIntendedTypes, QueueTypeMask { intendedType })
         return 0
     }
 
-    generalQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredGeneralQueueFamily)
-    presentQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredPresentQueueFamily)
-    graphicsQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredGraphicsQueueFamily)
-    transferQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredTransferQueueFamily)
-    computeQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &queuePriorities[0], preferredComputeQueueFamily)
+    uniqueQueueCount := u32(0)
+    generalQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &deviceQueueIntendedTypes, &queuePriorities[0], preferredGeneralQueueFamily, .General, &uniqueQueueCount)
+    presentQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &deviceQueueIntendedTypes, &queuePriorities[0], preferredPresentQueueFamily, .Present, &uniqueQueueCount)
+    graphicsQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &deviceQueueIntendedTypes, &queuePriorities[0], preferredGraphicsQueueFamily, .Graphics, &uniqueQueueCount)
+    transferQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &deviceQueueIntendedTypes, &queuePriorities[0], preferredTransferQueueFamily, .Transfer, &uniqueQueueCount)
+    computeQueueIndex := addDeviceQueueCI(physicalDeviceQueueFamilyProperties, &deviceQueueCIs, &deviceQueueIntendedTypes, &queuePriorities[0], preferredComputeQueueFamily, .Compute, &uniqueQueueCount)
+
+    this._queues = make([]Queue, uniqueQueueCount)
+    {
+        currentCI := u32(0)
+        currentQueue := u32(0)
+        for i in 0..<len(this._queues) {
+            queueFlags := physicalDeviceQueueFamilyProperties[deviceQueueCIs[currentCI].queueFamilyIndex].queueFlags
+            supportedTypes: QueueTypeMask
+            if .GRAPHICS in queueFlags {
+                supportedTypes |= { .Graphics }
+            } else if .TRANSFER in queueFlags {
+                supportedTypes |= { .Transfer }
+            } else if .COMPUTE in queueFlags {
+                supportedTypes |= { .Compute }
+            }
+
+            this._queues[i] = {
+                family = deviceQueueCIs[currentCI].queueFamilyIndex,
+                index = 0,
+                intendedTypes = deviceQueueIntendedTypes[i],
+                supportedTypes = supportedTypes,
+            }
+
+            currentQueue += 1
+            if currentQueue >= deviceQueueCIs[currentCI].queueCount {
+                currentQueue = 0
+                currentCI += 1
+            }
+        }
+    }
 
     availablePhysicalDeviceFeatures: vk.PhysicalDeviceFeatures
     this._instance.getPhysicalDeviceFeatures(viablePhysicalDevice, &availablePhysicalDeviceFeatures)
@@ -1287,52 +1334,91 @@ init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false
         _log(this, .Warning, "Failed to load Vulkan dynamic rendering function pointers which is recommended for use")
     }
 
-    /* get queues */
-    this._generalQueue = {
-        family = preferredGeneralQueueFamily,
-        index = generalQueueIndex,
+    /* get queues and setup command pools */
+    for &queue in this._queues {
+        this._device.getDeviceQueue(this._device.logical, queue.family, queue.index, &queue.queue)
+
+        if .General in queue.intendedTypes {
+            this._generalQueue = &queue
+        }
+
+        if .Present in queue.intendedTypes {
+            this._presentQueue = &queue
+        }
+
+        if .Graphics in queue.intendedTypes {
+            this._graphicsQueue = &queue
+        }
+
+        if .Transfer in queue.intendedTypes {
+            this._transferQueue = &queue
+        }
+
+        if .Compute in queue.intendedTypes {
+            this._computeQueue = &queue
+        }
+
+        queue.commandPool._isInternal = true
+        if !this->createCommandPool(&queue.commandPool, &this._defaultFencePool, &queue) {
+            _log(this, .Fatal, "Failed to create internal command pool")
+            return false
+        }
     }
 
-    this._presentQueue = {
-        family = preferredPresentQueueFamily,
-        index = presentQueueIndex,
+    /* setup pools */
+    this._defaultFencePool._isInternal = true
+    if !this->createFencePool(&this._defaultFencePool) {
+        _log(this, .Fatal, "Failed to create internal default fence pool")
+        return false
     }
 
-    this._graphicsQueue = {
-        family = preferredGraphicsQueueFamily,
-        index = graphicsQueueIndex,
+    this._defaultSemaphorePool._isInternal = true
+    if !this->createSemaphorePool(&this._defaultSemaphorePool) {
+        _log(this, .Fatal, "Failed to create internal default semaphore pool")
+        return false
     }
-
-    this._transferQueue = {
-        family = preferredTransferQueueFamily,
-        index = transferQueueIndex,
-    }
-
-    this._computeQueue = {
-        family = preferredComputeQueueFamily,
-        index = computeQueueIndex,
-    }
-
-    this._device.getDeviceQueue(this._device.logical, this._generalQueue.family, this._generalQueue.index, &this._generalQueue.queue)
-    this._device.getDeviceQueue(this._device.logical, this._presentQueue.family, this._presentQueue.index, &this._presentQueue.queue)
-    this._device.getDeviceQueue(this._device.logical, this._graphicsQueue.family, this._graphicsQueue.index, &this._graphicsQueue.queue)
-    this._device.getDeviceQueue(this._device.logical, this._transferQueue.family, this._transferQueue.index, &this._transferQueue.queue)
-    this._device.getDeviceQueue(this._device.logical, this._computeQueue.family, this._computeQueue.index, &this._computeQueue.queue)
 
     return true
 }
 
-destroy :: proc "c" (this: ^Renderer) {
+Renderer_destroy :: proc "c" (this: ^Renderer) {
     if this == nil {
         return
     }
 
     context = this._ctx
-    
+
+    this._performingDestruction = true
     if this._device.logical != nil {
         if this._device.deviceWaitIdle != nil {
             this._device.deviceWaitIdle(this._device.logical)
         }
+
+        this._generalQueue.commandPool->destroy()
+        this._generalQueue.commandPool._queue = nil
+
+        if this._presentQueue.commandPool._queue != nil {
+            this._presentQueue.commandPool->destroy()
+            this._presentQueue.commandPool._queue = nil
+        }
+
+        if this._graphicsQueue.commandPool._queue != nil {
+            this._graphicsQueue.commandPool->destroy()
+            this._graphicsQueue.commandPool._queue = nil
+        }
+
+        if this._transferQueue.commandPool._queue != nil {
+            this._transferQueue.commandPool->destroy()
+            this._transferQueue.commandPool._queue = nil
+        }
+
+        if this._computeQueue.commandPool._queue != nil {
+            this._computeQueue.commandPool->destroy()
+            this._computeQueue.commandPool._queue = nil
+        }
+        
+        this._defaultSemaphorePool->destroy()
+        this._defaultFencePool->destroy()
     }
 
     for _, wsi in this._wsis {
@@ -1363,7 +1449,7 @@ destroy :: proc "c" (this: ^Renderer) {
     }
 }
 
-createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WSISetting.DontCare) -> b32 {
+Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WSISetting.DontCare) -> b32 {
     if this == nil {
         return false
     }
@@ -1401,7 +1487,7 @@ createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WS
     return true
 }
 
-destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
+Renderer_destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
     if this == nil {
         return
     }
@@ -1426,11 +1512,522 @@ destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
     delete_key(&this._wsis, window^)
 }
 
-executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^krfw.IPass, window: ^krfw.Window) -> b32 {
+Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^krfw.IPass, window: ^krfw.Window) -> b32 {
     if this == nil {
         return false
     }
 
     context = this._ctx
     return false
+}
+
+/* Vulkan interface */
+Renderer_createFencePool :: proc "c" (this: ^Renderer, fencePool: ^FencePool) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't create a fence pool: renderer not fully initialized yet")
+        return false
+    }
+
+    if fencePool == nil {
+        _log(this, .Error, "Can't create a fence pool: invalid pointer to a FencePool")
+        return false
+    }
+
+    fencePool^ = {
+        destroy = FencePool_destroy,
+        acquire = FencePool_acquire,
+        release = FencePool_release,
+
+        _renderer           = this,
+        _fences             = make([dynamic]vk.Fence),
+        _unusedFenceIndices = make([dynamic]u32),
+    }
+
+    return true
+}
+
+Renderer_createSemaphorePool :: proc "c" (this: ^Renderer, semaphorePool: ^SemaphorePool) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't create a semaphore pool: renderer not fully initialized yet")
+        return false
+    }
+
+    if semaphorePool == nil {
+        _log(this, .Error, "Can't create a semaphore pool: invalid pointer to a SemaphorePool")
+        return false
+    }
+
+    semaphorePool^ = {
+        destroy = SemaphorePool_destroy,
+        acquire = SemaphorePool_acquire,
+        release = SemaphorePool_release,
+
+        _renderer               = this,
+        _semaphores             = make([dynamic]vk.Semaphore),
+        _unusedSemaphoreIndices = make([dynamic]u32),
+    }
+
+    return true
+}
+
+Renderer_createCommandPool :: proc "c" (this: ^Renderer, commandPool: ^CommandPool, fencePool: ^FencePool, queue: ^Queue) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't create a command pool: renderer not fully initialized yet")
+        return false
+    }
+
+    if commandPool == nil {
+        _log(this, .Error, "Can't create a command pool: invalid pointer to a CommandPool")
+        return false
+    }
+
+    ci := vk.CommandPoolCreateInfo {
+        sType = .COMMAND_POOL_CREATE_INFO,
+        flags = { .RESET_COMMAND_BUFFER },
+        queueFamilyIndex = queue.family,
+    }
+
+    cp: vk.CommandPool
+    if this._device.createCommandPool(this._device.logical, &ci, this._allocator, &cp) != .SUCCESS {
+        _log(this, .Error, "Failed to create Vulkan command pool")
+        return false
+    }
+
+    commandPool^ = {
+        destroy     = CommandPool_destroy,
+        getQueue    = CommandPool_getQueue,
+        acquire     = CommandPool_acquire,
+        submit      = CommandPool_submit,
+        release     = CommandPool_release,
+
+        _renderer       = this,
+        _queue          = queue,
+        _fencePool      = fencePool,
+        _commandPool    = cp,
+
+        _commandBuffers             = make([dynamic]vk.CommandBuffer),
+        _unusedCommandBufferIndices = make([dynamic]u32),
+    }
+
+    return true
+}
+
+Renderer_getDefaultFencePool :: proc "c" (this: ^Renderer) -> ^FencePool {
+    if this == nil {
+        return nil
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't get default fence pool: renderer not fully initialized yet")
+        return nil
+    }
+
+    return &this._defaultFencePool
+}
+
+Renderer_getDefaultSemaphorePool :: proc "c" (this: ^Renderer) -> ^SemaphorePool {
+    if this == nil {
+        return nil
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't get default semaphore pool: renderer not fully initialized yet")
+        return nil
+    }
+
+    return &this._defaultSemaphorePool
+}
+
+Renderer_getDefaultCommandPool :: proc "c" (this: ^Renderer, queueType: QueueType) -> ^CommandPool {
+    if this == nil {
+        return nil
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't get default command pool: renderer not fully initialized yet")
+        return nil
+    }
+
+    switch queueType {
+        case .General:
+            return &this._generalQueue.commandPool
+        case .Present:
+            return &this._presentQueue.commandPool
+        case .Graphics:
+            return &this._graphicsQueue.commandPool
+        case .Transfer:
+            return &this._transferQueue.commandPool
+        case .Compute:
+            return &this._computeQueue.commandPool
+        case .Invalid:
+            break
+    }
+
+    _log(this, .Error, "Can't get default command pool: invalid queue type provided")
+    return nil
+}
+
+/* FencePool implementation */
+FencePool_destroy :: proc "c" (this: ^FencePool) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+
+    context = this._renderer._ctx
+
+    if this._isInternal && !this._renderer._performingDestruction {
+        _log(this._renderer, .Error, "Can't destroy this fence pool as it is internally managed by the renderer")
+        return
+    }
+
+    if len(this._fences) != 0 {
+        if this._renderer._device.waitForFences(this._renderer._device.logical, u32(len(this._fences)), &this._fences[0], true, max(u64)) != .SUCCESS {
+            _log(this._renderer, .Warning, "Failed to wait for all fences to be signaled when destroying fence pool; attempting wait device")
+
+            if this._renderer._device.deviceWaitIdle(this._renderer._device.logical) != .SUCCESS {
+                _log(this._renderer, .Warning, "Failed to wait for device to idle when destroying fence pool; ignoring failure")
+            }
+        }
+
+        for fence in this._fences {
+            this._renderer._device.destroyFence(this._renderer._device.logical, fence, this._renderer._allocator)
+        }
+    }
+
+    delete(this._unusedFenceIndices)
+    delete(this._fences)
+}
+
+FencePool_acquire :: proc "c" (this: ^FencePool, signaled := b32(false)) -> vk.Fence {
+    if this == nil || this._renderer == nil {
+        return 0
+    }
+    
+    context = this._renderer._ctx
+
+    if len(this._unusedFenceIndices) == 0 || signaled {
+        ci := vk.FenceCreateInfo {
+            sType = .FENCE_CREATE_INFO,
+            flags = signaled ? { .SIGNALED } : {},
+        }
+
+        fence: vk.Fence
+        if this._renderer._device.createFence(this._renderer._device.logical, &ci, this._renderer._allocator, &fence) != .SUCCESS {
+            _log(this._renderer, .Error, "Failed to create Vulkan fence")
+            return 0
+        }
+
+        append(&this._fences, fence)
+        return fence
+    }
+
+    unusedFenceIndex := this._unusedFenceIndices[0]
+    fence := this._fences[unusedFenceIndex]
+
+    if this._renderer._device.resetFences(this._renderer._device.logical, 1, &fence) != .SUCCESS {
+        _log(this._renderer, .Error, "Failed to reset Vulkan fence")
+        return 0
+    }
+
+    mem.copy(&this._unusedFenceIndices[0], &this._unusedFenceIndices[1], (len(this._unusedFenceIndices) - 1) * size_of(u32))
+    resize(&this._unusedFenceIndices, len(this._unusedFenceIndices) - 1)
+
+    return fence
+}
+
+FencePool_release :: proc "c" (this: ^FencePool, fence: vk.Fence) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+    
+    context = this._renderer._ctx
+
+    for i in 0..<len(this._fences) {
+        if fence == this._fences[i] {
+            for u in this._unusedFenceIndices {
+                if u == u32(i) {
+                    _log(this._renderer, .Warning, "Can't release fence: provided fence has already been released and is unused")
+                    return
+                }
+            }
+
+            append(&this._unusedFenceIndices, u32(i))
+            return
+        }
+    }
+
+    _log(this._renderer, .Warning, "Can't release fence: provided fence not found in this pool")
+}
+
+/* SemaphorePool implementation */
+SemaphorePool_destroy :: proc "c" (this: ^SemaphorePool) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+
+    context = this._renderer._ctx
+
+    if this._isInternal && !this._renderer._performingDestruction {
+        _log(this._renderer, .Error, "Can't destroy this semaphore pool as it is internally managed by the renderer")
+        return
+    }
+
+    if len(this._semaphores) != 0 {
+        if this._renderer._device.deviceWaitIdle(this._renderer._device.logical) != .SUCCESS {
+            _log(this._renderer, .Warning, "Failed to wait for device to idle when destroying semaphore pool; ignoring failure")
+        }
+
+        for semaphore in this._semaphores {
+            this._renderer._device.destroySemaphore(this._renderer._device.logical, semaphore, this._renderer._allocator)
+        }
+    }
+
+    delete(this._unusedSemaphoreIndices)
+    delete(this._semaphores)
+}
+
+SemaphorePool_acquire :: proc "c" (this: ^SemaphorePool) -> vk.Semaphore {
+    if this == nil || this._renderer == nil {
+        return 0
+    }
+    
+    context = this._renderer._ctx
+
+    if len(this._unusedSemaphoreIndices) == 0 {
+        ci := vk.SemaphoreCreateInfo {
+            sType = .SEMAPHORE_CREATE_INFO,
+        }
+
+        semaphore: vk.Semaphore
+        if this._renderer._device.createSemaphore(this._renderer._device.logical, &ci, this._renderer._allocator, &semaphore) != .SUCCESS {
+            _log(this._renderer, .Error, "Failed to create Vulkan semaphore")
+            return 0
+        }
+
+        append(&this._semaphores, semaphore)
+        return semaphore
+    }
+
+    unusedSemaphoreIndex := this._unusedSemaphoreIndices[0]
+    semaphore := this._semaphores[unusedSemaphoreIndex]
+
+    mem.copy(&this._unusedSemaphoreIndices[0], &this._unusedSemaphoreIndices[1], (len(this._unusedSemaphoreIndices) - 1) * size_of(u32))
+    resize(&this._unusedSemaphoreIndices, len(this._unusedSemaphoreIndices) - 1)
+
+    return semaphore
+}
+
+SemaphorePool_release :: proc "c" (this: ^SemaphorePool, semaphore: vk.Semaphore) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+    
+    context = this._renderer._ctx
+
+    for i in 0..<len(this._semaphores) {
+        if semaphore == this._semaphores[i] {
+            for u in this._unusedSemaphoreIndices {
+                if u == u32(i) {
+                    _log(this._renderer, .Warning, "Can't release semaphore: provided semaphore has already been released and is unused")
+                    return
+                }
+            }
+
+            append(&this._unusedSemaphoreIndices, u32(i))
+            return
+        }
+    }
+
+    _log(this._renderer, .Warning, "Can't release semaphore: provided semaphore not found in this pool")
+}
+
+/* CommandPool implementation */
+CommandPool_destroy :: proc "c" (this: ^CommandPool) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+
+    context = this._renderer._ctx
+
+    if this._isInternal && !this._renderer._performingDestruction {
+        _log(this._renderer, .Error, "Can't destroy this command pool as it is internally managed by the renderer")
+        return
+    }
+
+    if len(this._commandBuffers) != 0 {
+        if this._renderer._device.queueWaitIdle(this._queue.queue) != .SUCCESS {
+            _log(this._renderer, .Warning, "Failed to wait queue when destroying command pool; attempting wait device")
+
+            if this._renderer._device.deviceWaitIdle(this._renderer._device.logical) != .SUCCESS {
+                _log(this._renderer, .Warning, "Failed to wait for device to idle when destroying command pool; ignoring failure")
+            }
+        }
+
+        this._renderer._device.destroyCommandPool(this._renderer._device.logical, this._commandPool, this._renderer._allocator)
+    }
+
+    delete(this._unusedCommandBufferIndices)
+    delete(this._commandBuffers)
+}
+
+CommandPool_getQueue :: proc "c" (this: ^CommandPool) -> ^Queue {
+    if this == nil || this._renderer == nil {
+        return nil
+    }
+
+    context = this._renderer._ctx
+
+    return this._queue
+}
+
+CommandPool_acquire :: proc "c" (this: ^CommandPool, bundle := b32(false)) -> vk.CommandBuffer {
+    if this == nil || this._renderer == nil {
+        return nil
+    }
+
+    context = this._renderer._ctx
+
+    if len(this._unusedCommandBufferIndices) == 0 {
+        ai := vk.CommandBufferAllocateInfo {
+            sType = .COMMAND_BUFFER_ALLOCATE_INFO,
+            commandPool = this._commandPool,
+            level = bundle ? .SECONDARY : .PRIMARY,
+            commandBufferCount = 1,
+        }
+
+        commandBuffer: vk.CommandBuffer
+        if this._renderer._device.allocateCommandBuffers(this._renderer._device.logical, &ai, &commandBuffer) != .SUCCESS {
+            _log(this._renderer, .Error, "Failed to allocate Vulkan command buffer")
+            return nil
+        }
+
+        append(&this._commandBuffers, commandBuffer)
+        return commandBuffer
+    }
+
+    unusedCommandBufferIndex := this._unusedCommandBufferIndices[0]
+    commandBuffer := this._commandBuffers[unusedCommandBufferIndex]
+    
+    mem.copy(&this._unusedCommandBufferIndices[0], &this._unusedCommandBufferIndices[1], (len(this._unusedCommandBufferIndices) - 1) * size_of(u32))
+    resize(&this._unusedCommandBufferIndices, len(this._unusedCommandBufferIndices) - 1)
+
+    return commandBuffer
+}
+
+CommandPool_submit :: proc "c" (this: ^CommandPool, commandBuffer: vk.CommandBuffer, submitInfoWaitCount: u32, submitInfoWaits: [^]SubmitInfoWait, signalSemaphoreCount: u32, signalSemaphores: [^]vk.Semaphore) -> vk.Fence {
+    if this == nil || this._renderer == nil {
+        return 0
+    }
+
+    context = this._renderer._ctx
+
+    found := false
+    for cb in this._commandBuffers {
+        if cb == commandBuffer {
+            found = true
+            break
+        }
+    }
+
+    if !found {
+        _log(this._renderer, .Error, "Can't submit command buffer: provided command buffer not found in this pool")
+        return 0
+    }
+
+    waitSemaphores := make([]vk.Semaphore, submitInfoWaitCount)
+    defer delete(waitSemaphores)
+
+    waitDstStageMasks := make([]vk.PipelineStageFlags, submitInfoWaitCount)
+    defer delete(waitDstStageMasks)
+
+    for i in 0..<submitInfoWaitCount {
+        waitSemaphores[i] = submitInfoWaits[i].semaphore
+        waitDstStageMasks[i] = submitInfoWaits[i].dstStageMask
+    }
+
+    fence := this._fencePool->acquire()
+    if fence == 0 {
+        _log(this._renderer, .Error, "Can't submit command buffer: failed to acquire submission fence")
+        return 0
+    }
+
+    cb := commandBuffer
+    si := vk.SubmitInfo {
+        sType = .SUBMIT_INFO,
+        waitSemaphoreCount = submitInfoWaitCount,
+        pWaitSemaphores = &waitSemaphores[0],
+        pWaitDstStageMask = &waitDstStageMasks[0],
+        commandBufferCount = 1,
+        pCommandBuffers = &cb,
+        signalSemaphoreCount = signalSemaphoreCount,
+        pSignalSemaphores = signalSemaphores,
+    }
+
+    if this._renderer._device.queueSubmit(this._queue.queue, 1, &si, fence) != .SUCCESS {
+        _log(this._renderer, .Error, "Failed to submit Vulkan queue")
+        return 0
+    }
+
+    return fence
+}
+
+CommandPool_release :: proc "c" (this: ^CommandPool, commandBuffer: vk.CommandBuffer, fence: vk.Fence) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+
+    context = this._renderer._ctx
+
+    if commandBuffer == nil {
+        if fence == 0 {
+            return
+        }
+
+        this._fencePool->release(fence)
+        return
+    }
+
+    for i in 0..<len(this._commandBuffers) {
+        if commandBuffer == this._commandBuffers[i] {
+            for u in this._unusedCommandBufferIndices {
+                if u == u32(i) {
+                    _log(this._renderer, .Warning, "Can't release command buffer: provided command buffer has already been released and is unused")
+                    return
+                }
+            }
+
+            append(&this._unusedCommandBufferIndices, u32(i))
+            if fence != 0 {
+                this._fencePool->release(fence)
+            }
+
+            return
+        }
+    }
+
+    _log(this._renderer, .Warning, "Can't release command buffer: provided command buffer not found in this pool")
 }

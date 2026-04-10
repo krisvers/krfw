@@ -421,7 +421,7 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
 
     this._headless = bool(headless)
     this._debug = bool(debug)
-    this._wsis = make(map[krfw.Window]WSI)
+    this._backbufferPools = make(map[krfw.Window]BackbufferPool)
 
     /* load Vulkan loader */
     if this._library != nil {
@@ -760,15 +760,19 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
 
     /* create queued windows if necessary */
     if this._areWindowsQueued {
-        for &wsi in this._queuedWindows {
-            surface := _createSurface(this, &wsi.window)
+        for &w in this._queuedWindows {
+            surface := _createSurface(this, &w.window)
             if surface == 0 {
                 _log(this, .Error, "Failed to create Vulkan surface from window queued by createWSI prior to init; ignoring error for now")
                 continue
             }
 
-            wsi.surface = surface
-            this._wsis[wsi.window] = wsi
+            this._backbufferPools[w.window] = {
+                _renderer = this,
+                _window = w.window,
+                _setting = w.setting,
+                _surface = surface,
+            }
         }
 
         delete(this._queuedWindows)
@@ -1152,9 +1156,9 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
         }
 
         if !this._headless {
-            for _, wsi in this._wsis {
+            for _, pool in this._backbufferPools {
                 supported: b32
-                if this._instance.khr.surface.getPhysicalDeviceSurfaceSupport(viablePhysicalDevice, i, wsi.surface, &supported) != .SUCCESS {
+                if this._instance.khr.surface.getPhysicalDeviceSurfaceSupport(viablePhysicalDevice, i, pool._surface, &supported) != .SUCCESS {
                     _log(this, .Fatal, "Failed to get Vulkan physical device surface support for queued window")
                     return false
                 }
@@ -1378,6 +1382,15 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
         return false
     }
 
+    /* finish initializing any queued windows */
+    for w in this._backbufferPools {
+        window := w
+        if !_Renderer_finishCreateWSI(this, &window) {
+            _log(this, .Fatal, "Failed to finish creating WSI")
+            return false
+        }
+    }
+
     return true
 }
 
@@ -1394,35 +1407,18 @@ Renderer_destroy :: proc "c" (this: ^Renderer) {
             this._device.deviceWaitIdle(this._device.logical)
         }
 
-        this._generalQueue.commandPool->destroy()
-        this._generalQueue.commandPool._queue = nil
-
-        if this._presentQueue.commandPool._queue != nil {
-            this._presentQueue.commandPool->destroy()
-            this._presentQueue.commandPool._queue = nil
+        for &queue in this._queues {
+            queue.commandPool->destroy()
         }
 
-        if this._graphicsQueue.commandPool._queue != nil {
-            this._graphicsQueue.commandPool->destroy()
-            this._graphicsQueue.commandPool._queue = nil
-        }
-
-        if this._transferQueue.commandPool._queue != nil {
-            this._transferQueue.commandPool->destroy()
-            this._transferQueue.commandPool._queue = nil
-        }
-
-        if this._computeQueue.commandPool._queue != nil {
-            this._computeQueue.commandPool->destroy()
-            this._computeQueue.commandPool._queue = nil
-        }
+        delete(this._queues)
         
         this._defaultSemaphorePool->destroy()
         this._defaultFencePool->destroy()
     }
 
-    for _, wsi in this._wsis {
-        this._instance.khr.surface.destroySurface(this._instance.instance, wsi.surface, this._allocator)
+    for _, pool in this._backbufferPools {
+        this._instance.khr.surface.destroySurface(this._instance.instance, pool._surface, this._allocator)
     }
 
     if this._device.logical != nil {
@@ -1442,11 +1438,207 @@ Renderer_destroy :: proc "c" (this: ^Renderer) {
     }
 
     /* cleanup containers */
-    delete(this._wsis)
+    delete(this._backbufferPools)
 
     if this._buffers != nil {
         free(this._buffers)
     }
+}
+
+/* internal function */
+_Renderer_finishCreateWSI :: proc(this: ^Renderer, window: ^krfw.Window) -> b32 {
+    backbufferPool := &this._backbufferPools[window^]
+
+    capabilities: vk.SurfaceCapabilitiesKHR
+    if this._instance.khr.surface.getPhysicalDeviceSurfaceCapabilities(this._device.physical, backbufferPool._surface, &capabilities) != .SUCCESS {
+        _log(this, .Error, "Failed to get Vulkan physical device surface capabilities")
+        return false
+    }
+
+    surfaceFormatCount: u32
+    if this._instance.khr.surface.getPhysicalDeviceSurfaceFormats(this._device.physical, backbufferPool._surface, &surfaceFormatCount, nil) != .SUCCESS {
+        _log(this, .Error, "Failed to get Vulkan list of compatible surface formats")
+        return false
+    }
+
+    surfaceFormats := make([]vk.SurfaceFormatKHR, surfaceFormatCount)
+    defer delete(surfaceFormats)
+
+    if this._instance.khr.surface.getPhysicalDeviceSurfaceFormats(this._device.physical, backbufferPool._surface, &surfaceFormatCount, &surfaceFormats[0]) != .SUCCESS {
+        _log(this, .Error, "Failed to get Vulkan list of compatible surface formats")
+        return false
+    }
+
+    presentModeCount: u32
+    if this._instance.khr.surface.getPhysicalDeviceSurfacePresentModes(this._device.physical, backbufferPool._surface, &presentModeCount, nil) != .SUCCESS {
+        _log(this, .Error, "Failed to get Vulkan list of compatible present modes")
+        return false
+    }
+
+    presentModes := make([]vk.PresentModeKHR, presentModeCount)
+    defer delete(presentModes)
+
+    if this._instance.khr.surface.getPhysicalDeviceSurfacePresentModes(this._device.physical, backbufferPool._surface, &presentModeCount, &presentModes[0]) != .SUCCESS {
+        _log(this, .Error, "Failed to get Vulkan list of compatible present modes")
+        return false
+    }
+
+    preferredSurfaceFormat := u32(0)
+    preferredSurfaceFormatScore := min(int)
+    for i in 0..<surfaceFormatCount {
+        score := 0
+        #partial switch surfaceFormats[i].format {
+            case .R8G8B8A8_SRGB:
+                score += 20
+            case .B8G8R8A8_SRGB:
+                score += 15
+            case .R8G8B8_SRGB:
+                score += 12
+            case .B8G8R8_SRGB:
+                score += 11
+            case .R8G8B8A8_UNORM:
+                score += 10
+            case .B8G8R8A8_UNORM:
+                score += 5
+            case:
+                break
+        }
+        
+        #partial switch surfaceFormats[i].colorSpace {
+            case .SRGB_NONLINEAR:
+                score += 20
+            case .EXTENDED_SRGB_NONLINEAR_EXT:
+                score += 5
+            case:
+                break
+        }
+
+        if score > preferredSurfaceFormatScore {
+            preferredSurfaceFormat = i
+            preferredSurfaceFormatScore = score
+        }
+    }
+
+    mailboxScore        := 20
+    fifoRelaxedScore    := 15
+    fifoScore           := 10
+    immediateScore      := 5
+
+    #partial switch backbufferPool._setting {
+        case .Immediate:
+            immediateScore += 20
+        case .VSync:
+            fifoRelaxedScore += 15
+            fifoScore += 15
+        case:
+            break
+    }
+
+    preferredPresentMode := u32(0)
+    preferredPresentModeScore := min(int)
+    for i in 0..<presentModeCount {
+        score := 0
+
+        #partial switch presentModes[i] {
+            case .MAILBOX:
+                score += mailboxScore
+            case .FIFO_RELAXED:
+                score += fifoRelaxedScore
+            case .FIFO:
+                score += fifoScore
+            case .IMMEDIATE:
+                score += immediateScore
+            case:
+                break
+        }
+
+        if score > preferredPresentModeScore {
+            preferredPresentMode = i
+            preferredPresentModeScore = score
+        }
+    }
+
+    ci := vk.SwapchainCreateInfoKHR {
+        sType = .SWAPCHAIN_CREATE_INFO_KHR,
+        surface = backbufferPool._surface,
+        minImageCount = min(capabilities.maxImageCount, max(capabilities.minImageCount, 3)),
+        imageFormat = surfaceFormats[preferredSurfaceFormat].format,
+        imageColorSpace = surfaceFormats[preferredSurfaceFormat].colorSpace,
+        imageExtent = capabilities.currentExtent,
+        imageArrayLayers = 1,
+        imageUsage = { .TRANSFER_SRC, .TRANSFER_DST, .SAMPLED, .STORAGE, .COLOR_ATTACHMENT },
+        imageSharingMode = .EXCLUSIVE,
+        queueFamilyIndexCount = 1,
+        pQueueFamilyIndices = &this._presentQueue.family,
+        preTransform = { .IDENTITY },
+        compositeAlpha = { .INHERIT },
+        presentMode = presentModes[preferredPresentMode],
+    }
+
+    if this._device.khr.swapchain.createSwapchain(this._device.logical, &ci, this._allocator, &backbufferPool._swapchain) != .SUCCESS {
+        _log(this, .Error, "Failed to create Vulkan swapchain")
+        return false
+    }
+
+    backbufferCount: u32
+    if this._device.khr.swapchain.getSwapchainImages(this._device.logical, backbufferPool._swapchain, &backbufferCount, nil) != .SUCCESS {
+        _log(this, .Error, "Failed to get Vulkan swapchain images")
+        return false
+    }
+
+    backbufferPool._backbuffers = make([]Backbuffer, backbufferCount)
+    backbufferImages := make([]vk.Image, backbufferCount)
+    defer delete(backbufferImages)
+
+    if this._device.khr.swapchain.getSwapchainImages(this._device.logical, backbufferPool._swapchain, &backbufferCount, &backbufferImages[0]) != .SUCCESS {
+        _log(this, .Error, "Failed to get Vulkan swapchain images")
+        return false
+    }
+
+    for i in 0..<backbufferCount {
+        ci := vk.ImageViewCreateInfo {
+            sType = .IMAGE_VIEW_CREATE_INFO,
+            image = backbufferImages[i],
+            viewType = .D2,
+            format = surfaceFormats[preferredSurfaceFormat].format,
+            components = {
+                r = .IDENTITY,
+                g = .IDENTITY,
+                b = .IDENTITY,
+                a = .IDENTITY,
+            },
+            subresourceRange = {
+                aspectMask = { .COLOR },
+                baseMipLevel = 0,
+                levelCount = 1,
+                baseArrayLayer = 0,
+                layerCount = 1,
+            }
+        }
+
+        view: vk.ImageView
+        if this._device.createImageView(this._device.logical, &ci, this._allocator, &view) != .SUCCESS {
+            _log(this, .Error, "Failed to create Vulkan image view for backbuffer {}", i)
+            return false
+        }
+        
+        backbufferPool._backbuffers[i] = {
+            index = i,
+            image = backbufferImages[i],
+            imageView = view,
+
+            surfaceFormat = surfaceFormats[preferredSurfaceFormat],
+            extent = capabilities.currentExtent,
+            layerCount = 1,
+
+            fence = 0,
+            semaphore = 0,
+        }
+    }
+
+    backbufferPool._fencePool = &this._defaultFencePool
+    backbufferPool._semaphorePool = &this._defaultSemaphorePool
+    return true
 }
 
 Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WSISetting.DontCare) -> b32 {
@@ -1459,16 +1651,18 @@ Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting :
     if this._instance.instance == nil {
         if !this._areWindowsQueued {
             this._areWindowsQueued = true
-            this._queuedWindows = make([dynamic]WSI)
+            this._queuedWindows = make([dynamic]_QueuedWindow)
         }
 
-        append(&this._queuedWindows, WSI {
+        append(&this._queuedWindows, _QueuedWindow {
             window = window^,
-            
             setting = setting,
-            surface = 0,
         })
         return true
+    }
+
+    if this._headless {
+        _log(this, .Warning, "Attempting to create a WSI with a headless renderer might fail")
     }
 
     surface := _createSurface(this, window)
@@ -1477,14 +1671,14 @@ Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting :
         return false
     }
 
-    this._wsis[window^] = {
-        window = window^,
-
-        setting = setting,
-        surface = surface
+    this._backbufferPools[window^] = {
+        _renderer = this,
+        _window = window^,
+        _setting = setting,
+        _surface = surface,
     }
 
-    return true
+    return _Renderer_finishCreateWSI(this, window)
 }
 
 Renderer_destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
@@ -1494,8 +1688,9 @@ Renderer_destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
 
     context = this._ctx
 
-    wsi, ok := this._wsis[window^]
+    backbufferPool, ok := this._backbufferPools[window^]
     if !ok {
+        _log(this, .Warning, "Can't destroy WSI: provided window does not have an associated WSI")
         return
     }
     
@@ -1503,13 +1698,29 @@ Renderer_destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
         if this._device.deviceWaitIdle != nil {
             this._device.deviceWaitIdle(this._device.logical)
         }
+
+        if backbufferPool._swapchain != 0 {
+            if this._device.destroyImageView != nil {
+                for backbuffer in backbufferPool._backbuffers {
+                    if backbuffer.imageView != 0 {
+                        this._device.destroyImageView(this._device.logical, backbuffer.imageView, this._allocator)
+                    }
+                }
+            }
+
+            if this._device.khr.swapchain.destroySwapchain != nil {
+                this._device.khr.swapchain.destroySwapchain(this._device.logical, backbufferPool._swapchain, this._allocator)
+            }
+
+            delete(backbufferPool._backbuffers)
+        }
     }
 
     if this._instance.khr.surface.destroySurface != nil {
-        this._instance.khr.surface.destroySurface(this._instance.instance, wsi.surface, this._allocator)
+        this._instance.khr.surface.destroySurface(this._instance.instance, backbufferPool._surface, this._allocator)
     }
 
-    delete_key(&this._wsis, window^)
+    delete_key(&this._backbufferPools, window^)
 }
 
 Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^krfw.IPass, window: ^krfw.Window) -> b32 {
@@ -1886,9 +2097,9 @@ CommandPool_destroy :: proc "c" (this: ^CommandPool) {
                 _log(this._renderer, .Warning, "Failed to wait for device to idle when destroying command pool; ignoring failure")
             }
         }
-
-        this._renderer._device.destroyCommandPool(this._renderer._device.logical, this._commandPool, this._renderer._allocator)
     }
+
+    this._renderer._device.destroyCommandPool(this._renderer._device.logical, this._commandPool, this._renderer._allocator)
 
     delete(this._unusedCommandBufferIndices)
     delete(this._commandBuffers)

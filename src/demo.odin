@@ -52,8 +52,8 @@ main :: proc() {
     }
 
     renderer->destroyWSI(&{
-        nativeWindowHandle = sdl3.Metal_CreateView(window),
-        nativeWindowType = .Metal,
+        nativeWindowHandle = sdl3.GetPointerProperty(sdl3.GetWindowProperties(window), sdl3.PROP_WINDOW_COCOA_WINDOW_POINTER, nil),
+        nativeWindowType = .Cocoa,
     })
 
     renderer->destroy()

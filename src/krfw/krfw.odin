@@ -5,8 +5,8 @@ VERSION_MINOR :: 1
 
 WSISetting :: enum u32 {
     DontCare    = 0,
-    VSync       = 1,
-    Immediate   = 2,
+    Immediate   = 1,
+    VSync       = 2,
     Mailbox     = 3,
 }
 

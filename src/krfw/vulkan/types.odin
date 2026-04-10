@@ -105,11 +105,39 @@ PassVTable :: struct {
 }
 
 /* wsi management (surface, swapchain and backbuffers) */
-WSI :: struct {
-    window:     krfw.Window,
+Backbuffer :: struct {
+    index:          u32,
+    image:          vk.Image,
+    imageView:      vk.ImageView,
 
-    setting:    krfw.WSISetting,
-    surface:    vk.SurfaceKHR,
+    surfaceFormat:  vk.SurfaceFormatKHR,
+    extent:         vk.Extent2D,
+    layerCount:     u32,
+    
+    fence:          vk.Fence,
+    semaphore:      vk.Semaphore,
+}
+
+BackbufferPool :: struct {
+    using _: BackbufferPoolVTable,
+
+    _renderer:      ^Renderer,
+    _window:        krfw.Window,
+    _setting:       krfw.WSISetting,
+    _surface:       vk.SurfaceKHR,
+
+    _swapchain:     vk.SwapchainKHR,
+    _fencePool:     ^FencePool,
+    _semaphorePool: ^SemaphorePool,
+    _backbuffers:   []Backbuffer,
+}
+
+ProcBackbufferPoolAcquire :: #type proc "c" (this: ^BackbufferPool) -> ^Backbuffer
+ProcBackbufferPoolRelease :: #type proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuffer)
+
+BackbufferPoolVTable :: struct {
+    acquire: ProcBackbufferPoolAcquire,
+    release: ProcBackbufferPoolRelease,
 }
 
 /* fence pool */
@@ -192,6 +220,11 @@ _RendererBuffers :: struct {
     _driverPreference:  [vk.MAX_DRIVER_NAME_SIZE]u8,
 }
 
+_QueuedWindow :: struct {
+    window:     krfw.Window,
+    setting:    krfw.WSISetting,
+}
+
 /* renderer backend */
 Renderer :: struct {
     /* inherited components */
@@ -208,15 +241,15 @@ Renderer :: struct {
 
     /* pre-init, destroyed at the end of init */
     _areWindowsQueued:  bool,
-    _queuedWindows:     [dynamic]WSI,
+    _queuedWindows:     [dynamic]_QueuedWindow,
 
     /* init members */
-    _headless:  bool,
-    _debug:     bool,
-    _allocator: ^vk.AllocationCallbacks,
-    _instance:  Instance,
-    _wsis:      map[krfw.Window]WSI,
-    _device:    Device,
+    _headless:          bool,
+    _debug:             bool,
+    _allocator:         ^vk.AllocationCallbacks,
+    _instance:          Instance,
+    _device:            Device,
+    _backbufferPools:   map[krfw.Window]BackbufferPool,
 
     /* note: queues may be aliases of one another */
     _queues:    []Queue,

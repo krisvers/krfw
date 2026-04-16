@@ -3,14 +3,14 @@ package krfw
 VERSION_MAJOR :: 0
 VERSION_MINOR :: 1
 
-WSISetting :: enum u32 {
+WSISetting :: enum i32 {
     DontCare    = 0,
     Immediate   = 1,
     VSync       = 2,
     Mailbox     = 3,
 }
 
-NativeWindowType :: enum {
+NativeWindowType :: enum i32 {
     Win32   = 1,
     Xlib    = 2,
     Xcb     = 3,
@@ -19,9 +19,12 @@ NativeWindowType :: enum {
     Cocoa   = 6,
 }
 
+NativeWindowHandle  :: distinct rawptr
+NativeDisplayHandle :: distinct rawptr
+
 Window :: struct {
-    nativeWindowHandle:     rawptr,
-    nativeDisplayHandle:    rawptr,
+    nativeWindowHandle:     NativeWindowHandle,
+    nativeDisplayHandle:    NativeDisplayHandle,
     nativeWindowType:       NativeWindowType,
 }
 
@@ -31,16 +34,12 @@ IPass :: struct {
 
 ProcIPassInit               :: #type proc "c" (this: ^IPass) -> b32
 ProcIPassDestroy            :: #type proc "c" (this: ^IPass)
-ProcIPassRequiresBackbuffer :: #type proc "c" () -> b32
+ProcIPassRequiresBackbuffer :: #type proc "c" (this: ^IPass) -> b32
 
 IPassVTable :: struct {
     init:               ProcIPassInit,
     destroy:            ProcIPassDestroy,
     requiresBackbuffer: ProcIPassRequiresBackbuffer,
-}
-
-IRenderer :: struct {
-    using _: IRendererVTable,
 }
 
 DebugSeverity :: enum i32 {
@@ -53,6 +52,10 @@ DebugSeverity :: enum i32 {
 
 ProcDebugLogger :: #type proc "c" (severity: DebugSeverity, originLen: u32, origin: cstring, messageLen: u32, message: cstring)
 
+IRenderer :: struct {
+    using _: IRendererVTable,
+}
+
 ProcIRendererSetDebugLogger :: #type proc "c" (this: ^IRenderer, logger: ProcDebugLogger, lowestSeverity := DebugSeverity.Warning)
 ProcIRendererInit           :: #type proc "c" (this: ^IRenderer, lowPower := b32(false), headless := b32(false), debug := b32(false)) -> b32
 ProcIRendererDestroy        :: #type proc "c" (this: ^IRenderer)
@@ -62,7 +65,6 @@ ProcIRendererExecutePasses  :: #type proc "c" (this: ^IRenderer, passCount: u32,
 
 IRendererVTable :: struct {
     setDebugLogger: ProcIRendererSetDebugLogger,
-
     init:           ProcIRendererInit,
     destroy:        ProcIRendererDestroy,
     createWSI:      ProcIRendererCreateWSI,

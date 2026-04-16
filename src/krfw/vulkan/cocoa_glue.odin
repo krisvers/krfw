@@ -7,8 +7,9 @@ import ca "vendor:darwin/QuartzCore"
 _getCAMetalLayerFromNSWindow :: proc(nsWindow: rawptr) -> ^ca.MetalLayer {
     window := (^ns.Window)(nsWindow)
 
-    layer := ca.MetalLayer.layer()
-    window->contentView()->setLayer(layer)
+    layer := window->contentView()->layer()
+    //layer := ca.MetalLayer.layer()
+    //window->contentView()->setLayer(layer)
 
-    return layer
+    return (^ca.MetalLayer)(layer)
 }

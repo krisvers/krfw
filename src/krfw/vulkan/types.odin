@@ -55,13 +55,13 @@ Device :: struct {
 
 /* queue management */
 QueueType :: enum u32 {
-    General = 0,
-    Graphics = 1,
-    Transfer = 2,
-    Compute = 3,
-    Present = 4,
+    General     = 0,
+    Graphics    = 1,
+    Transfer    = 2,
+    Compute     = 3,
+    Present     = 4,
     
-    Invalid = 31,
+    Invalid     = 31,
 }
 
 QueueTypeMask :: bit_set[QueueType; u32]
@@ -73,71 +73,6 @@ Queue :: struct {
     intendedTypes:  QueueTypeMask,
     supportedTypes: QueueTypeMask,
     commandPool:    CommandPool,
-}
-
-SubmitInfoWait :: struct {
-    semaphore:      vk.Semaphore,
-    dstStageMask:   vk.PipelineStageFlags,
-}
-
-/* packet */
-ProcPacketAddSyncObjects :: #type proc "c" (renderer: ^Renderer, submitInfoWaitCount: u32, submitInfoWait: [^]SubmitInfoWait, signalCount: u32, signals: [^]vk.Semaphore)
-
-Packet :: struct {
-    renderer:   ^Renderer,
-    instance:   ^Instance,
-    device:     ^Device,
-
-    addSyncObjects: ProcPacketAddSyncObjects,
-}
-
-/* pass implementation */
-Pass :: struct {
-    /* inherited components */
-    #subtype ipass: krfw.IPass,
-    using _:        PassVTable,
-}
-
-ProcPassExecute :: #type proc "c" (this: ^Pass, packet: ^Packet) -> b32
-
-PassVTable :: struct {
-    execute: ProcPassExecute,
-}
-
-/* wsi management (surface, swapchain and backbuffers) */
-Backbuffer :: struct {
-    index:          u32,
-    image:          vk.Image,
-    imageView:      vk.ImageView,
-
-    surfaceFormat:  vk.SurfaceFormatKHR,
-    extent:         vk.Extent2D,
-    layerCount:     u32,
-    
-    fence:          vk.Fence,
-    semaphore:      vk.Semaphore,
-}
-
-BackbufferPool :: struct {
-    using _: BackbufferPoolVTable,
-
-    _renderer:      ^Renderer,
-    _window:        krfw.Window,
-    _setting:       krfw.WSISetting,
-    _surface:       vk.SurfaceKHR,
-
-    _swapchain:     vk.SwapchainKHR,
-    _fencePool:     ^FencePool,
-    _semaphorePool: ^SemaphorePool,
-    _backbuffers:   []Backbuffer,
-}
-
-ProcBackbufferPoolAcquire :: #type proc "c" (this: ^BackbufferPool) -> ^Backbuffer
-ProcBackbufferPoolRelease :: #type proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuffer)
-
-BackbufferPoolVTable :: struct {
-    acquire: ProcBackbufferPoolAcquire,
-    release: ProcBackbufferPoolRelease,
 }
 
 /* fence pool */
@@ -184,6 +119,11 @@ SemaphorePoolVTable :: struct {
     release: ProcSemaphorePoolRelease,
 }
 
+SubmitInfoWait :: struct {
+    semaphore:      vk.Semaphore,
+    dstStageMask:   vk.PipelineStageFlags,
+}
+
 /* command pool */
 CommandPool :: struct {
     using _: CommandPoolVTable,
@@ -214,6 +154,83 @@ CommandPoolVTable :: struct {
     release:    ProcCommandPoolRelease,
 }
 
+/* backbuffer pool */
+Backbuffer :: struct {
+    index:          u32,
+    image:          vk.Image,
+    imageView:      vk.ImageView,
+
+    surfaceFormat:  vk.SurfaceFormatKHR,
+    extent:         vk.Extent2D,
+    layerCount:     u32,
+    
+    fence:          vk.Fence,
+    semaphore:      vk.Semaphore,
+}
+
+BackbufferPool :: struct {
+    using _: BackbufferPoolVTable,
+
+    _renderer:      ^Renderer,
+    _window:        krfw.Window,
+    _setting:       krfw.WSISetting,
+    _surface:       vk.SurfaceKHR,
+
+    _swapchain:     vk.SwapchainKHR,
+    _fencePool:     ^FencePool,
+    _semaphorePool: ^SemaphorePool,
+    _backbuffers:   []Backbuffer,
+}
+
+ProcBackbufferPoolAcquire :: #type proc "c" (this: ^BackbufferPool) -> ^Backbuffer
+ProcBackbufferPoolRelease :: #type proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuffer)
+
+BackbufferPoolVTable :: struct {
+    acquire: ProcBackbufferPoolAcquire,
+    release: ProcBackbufferPoolRelease,
+}
+
+/* packet */
+BackbufferPacket :: struct {
+    backbuffer: ^Backbuffer,
+    lastStage:  vk.PipelineStageFlags,
+    lastLayout: vk.ImageLayout,
+}
+
+Packet :: struct {
+    using _: PacketVTable,
+
+    renderer:           ^Renderer,
+    instance:           ^Instance,
+    device:             ^Device,
+    queue:              ^Queue,
+    commandPool:        ^CommandPool,
+    commandBuffer:      vk.CommandBuffer,
+    backbufferPacket:   ^BackbufferPacket,
+
+    _submitInfoWaits:   ^[dynamic]SubmitInfoWait,
+    _signalSemaphores:  ^[dynamic]vk.Semaphore,
+}
+
+ProcPacketAddSyncObjects :: #type proc "c" (this: ^Packet, submitInfoWaitCount: u32, submitInfoWaits: [^]SubmitInfoWait, signalSemaphoreCount: u32, signalSemaphores: [^]vk.Semaphore)
+
+PacketVTable :: struct {
+    addSyncObjects: ProcPacketAddSyncObjects,
+}
+
+/* pass implementation */
+Pass :: struct {
+    /* inherited components */
+    using ipass:    krfw.IPass,
+    using _:        PassVTable,
+}
+
+ProcPassExecute :: #type proc "c" (this: ^Pass, packet: ^Packet) -> b32
+
+PassVTable :: struct {
+    execute: ProcPassExecute,
+}
+
 /* internal use only */
 _RendererBuffers :: struct {
     _debugLoggerBuffer: [2048]u8,
@@ -236,6 +253,7 @@ Renderer :: struct {
     _debugLoggerLowestSeverity: krfw.DebugSeverity,
     _ctx:                       runtime.Context,
     _library:                   dynlib.Library,
+    _allocator:                 ^vk.AllocationCallbacks,
     _globalFunctions:           GlobalFunctionPointers,
     using _buffers:             ^_RendererBuffers,
 
@@ -246,7 +264,6 @@ Renderer :: struct {
     /* init members */
     _headless:          bool,
     _debug:             bool,
-    _allocator:         ^vk.AllocationCallbacks,
     _instance:          Instance,
     _device:            Device,
     _backbufferPools:   map[krfw.Window]BackbufferPool,

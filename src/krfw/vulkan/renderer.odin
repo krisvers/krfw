@@ -108,8 +108,9 @@ RENDERER := Renderer {
     getDefaultSemaphorePool = Renderer_getDefaultSemaphorePool,
     getDefaultCommandPool   = Renderer_getDefaultCommandPool,
 
-    _ctx                = runtime.default_context(),
-    _library            = VULKAN_LOADER_DEFAULT_HANDLE,
+    _ctx                    = runtime.default_context(),
+    _library                = VULKAN_LOADER_DEFAULT_HANDLE,
+    _allocator              = nil,
 }
 
 _logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: string, origin: string) {
@@ -761,17 +762,8 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
     /* create queued windows if necessary */
     if this._areWindowsQueued {
         for &w in this._queuedWindows {
-            surface := _createSurface(this, &w.window)
-            if surface == 0 {
-                _log(this, .Error, "Failed to create Vulkan surface from window queued by createWSI prior to init; ignoring error for now")
-                continue
-            }
-
-            this._backbufferPools[w.window] = {
-                _renderer = this,
-                _window = w.window,
-                _setting = w.setting,
-                _surface = surface,
+            if !this->createWSI(&w.window, w.setting) {
+                _log(this, .Error, "Failed to create queued window WSI")
             }
         }
 
@@ -1447,6 +1439,10 @@ Renderer_destroy :: proc "c" (this: ^Renderer) {
 
 /* internal function */
 _Renderer_finishCreateWSI :: proc(this: ^Renderer, window: ^krfw.Window) -> b32 {
+    if this._device.logical == nil {
+        return true
+    }
+
     backbufferPool := &this._backbufferPools[window^]
 
     capabilities: vk.SurfaceCapabilitiesKHR
@@ -1658,6 +1654,7 @@ Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting :
             window = window^,
             setting = setting,
         })
+
         return true
     }
 
@@ -1672,10 +1669,13 @@ Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting :
     }
 
     this._backbufferPools[window^] = {
-        _renderer = this,
-        _window = window^,
-        _setting = setting,
-        _surface = surface,
+        acquire = BackbufferPool_acquire,
+        release = Backbuffer_release,
+
+        _renderer   = this,
+        _window     = window^,
+        _setting    = setting,
+        _surface    = surface,
     }
 
     return _Renderer_finishCreateWSI(this, window)
@@ -1723,13 +1723,210 @@ Renderer_destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
     delete_key(&this._backbufferPools, window^)
 }
 
-Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^krfw.IPass, window: ^krfw.Window) -> b32 {
+Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^Pass, window: ^krfw.Window) -> b32 {
     if this == nil {
         return false
     }
 
     context = this._ctx
-    return false
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't execute passes: renderer not fully initialized yet")
+        return false
+    }
+
+    /* NOTE: this function assumes present queue and general queues are aliases (which is bad) */
+    /* TODO: add queue-specific things */
+    commandBuffer := this._generalQueue.commandPool->acquire()
+    if commandBuffer == nil {
+        _log(this, .Error, "Failed to acquire command buffer")
+        return false
+    }
+
+    bi := vk.CommandBufferBeginInfo {
+        sType = .COMMAND_BUFFER_BEGIN_INFO,
+    }
+
+    if this._device.beginCommandBuffer(commandBuffer, &bi) != .SUCCESS {
+        _log(this, .Error, "Failed to begin command buffer")
+        return false
+    }
+
+    backbufferPool := (^BackbufferPool)(nil)
+    if window != nil {
+        if window^ not_in this._backbufferPools {
+            if !this->createWSI(window, .DontCare) {
+                _log(this, .Error, "Failed to auto-create WSI for provided window")
+                return false
+            }
+        }
+
+        backbufferPool = &this._backbufferPools[window^]
+    }
+
+    backbufferPacket := BackbufferPacket {
+        backbuffer = nil,
+        lastLayout = .UNDEFINED,
+        lastStage = { .TRANSFER },
+    }
+
+    submitInfoWaits := make([dynamic]SubmitInfoWait)
+    defer delete(submitInfoWaits)
+
+    signalSemaphores := make([dynamic]vk.Semaphore)
+    defer delete(signalSemaphores)
+
+    furthestBackbufferStage := vk.PipelineStageFlags { .TOP_OF_PIPE }
+
+    for pass in passes[:passCount] {
+        if pass->requiresBackbuffer() {
+            if window == nil {
+                _log(this, .Warning, "Provided pass requires backbuffer, but no window provided; this is likely to cause problems")
+            } else if backbufferPacket.backbuffer == nil {
+                backbufferPacket.backbuffer = backbufferPool->acquire()
+                if backbufferPacket.backbuffer == nil {
+                    _log(this, .Error, "Failed to acquire backbuffer for pass execution")
+                    return false
+                }
+            }
+        }
+
+        packet := Packet {
+            addSyncObjects = proc "c" (this: ^Packet, submitInfoWaitCount: u32, submitInfoWaits: [^]SubmitInfoWait, signalSemaphoreCount: u32, signalSemaphores: [^]vk.Semaphore) {
+                context = this.renderer._ctx
+
+                if submitInfoWaits != nil {
+                    for wait in submitInfoWaits[:submitInfoWaitCount] {
+                        append(this._submitInfoWaits, wait)
+                    }
+                }
+
+                if signalSemaphores != nil {
+                    for semaphore in signalSemaphores[:signalSemaphoreCount] {
+                        append(this._signalSemaphores, semaphore)
+                    }
+                }
+            },
+
+            renderer            = this,
+            instance            = &this._instance,
+            device              = &this._device,
+            queue               = this._generalQueue,
+            commandPool         = &this._generalQueue.commandPool,
+            commandBuffer       = commandBuffer,
+            backbufferPacket    = backbufferPacket.backbuffer == nil ? nil : &backbufferPacket,
+
+            _submitInfoWaits = &submitInfoWaits,
+            _signalSemaphores = &signalSemaphores,
+        }
+
+        if !pass->execute(&packet) {
+            _log(this, .Error, "Pass execution failure")
+        }
+
+        if backbufferPacket.lastStage > furthestBackbufferStage {
+            furthestBackbufferStage = backbufferPacket.lastStage
+        }
+    }
+
+    if backbufferPacket.backbuffer != nil {
+        backbufferToPresentBarrier := vk.ImageMemoryBarrier {
+            sType = .IMAGE_MEMORY_BARRIER,
+            srcAccessMask = {},
+            dstAccessMask = { .TRANSFER_READ },
+            oldLayout = backbufferPacket.lastLayout,
+            newLayout = .PRESENT_SRC_KHR,
+            srcQueueFamilyIndex = this._generalQueue.family,
+            dstQueueFamilyIndex = this._generalQueue.family,
+            image = backbufferPacket.backbuffer.image,
+            subresourceRange = {
+                aspectMask =  {.COLOR },
+                baseMipLevel = 0,
+                levelCount = 1,
+                baseArrayLayer = 0,
+                layerCount = backbufferPacket.backbuffer.layerCount,
+            }
+        }
+
+        this._device.cmdPipelineBarrier(commandBuffer,
+            backbufferPacket.lastStage,
+            { .TRANSFER }, {},
+            0, nil,
+            0, nil,
+            1, &backbufferToPresentBarrier
+        )
+    }
+
+    if this._device.endCommandBuffer(commandBuffer) != .SUCCESS {
+        _log(this, .Error, "Failed to end command buffer")
+        return false
+    }
+
+    backbufferFinishedSemaphore: vk.Semaphore
+    if backbufferPacket.backbuffer != nil {
+        append(&submitInfoWaits, SubmitInfoWait {
+            semaphore = backbufferPacket.backbuffer.semaphore,
+            dstStageMask = furthestBackbufferStage,
+        })
+
+        backbufferFinishedSemaphore = this._defaultSemaphorePool->acquire()
+        if backbufferFinishedSemaphore == 0 {
+            _log(this, .Error, "Failed to acquire semaphore for backbuffer completion")
+            return false
+        }
+
+        append(&signalSemaphores, backbufferFinishedSemaphore)
+    }
+
+    submissionFence := this._generalQueue.commandPool->submit(commandBuffer, u32(len(submitInfoWaits)), &submitInfoWaits[0], u32(len(signalSemaphores)), &signalSemaphores[0])
+    if submissionFence == 0 {
+        _log(this, .Error, "Failed to submit command buffer")
+        return false
+    }
+
+    waitFences := make([dynamic]vk.Fence, 1)
+    delete(waitFences)
+
+    waitFences[0] = submissionFence
+    
+    presentationFinishedFence: vk.Fence
+    if backbufferPacket.backbuffer != nil {
+        presentationFinishedFence = this._defaultFencePool->acquire()
+
+        spfi := vk.SwapchainPresentFenceInfoEXT {
+            sType = .SWAPCHAIN_PRESENT_FENCE_INFO_EXT,
+            swapchainCount = 1,
+            pFences = &presentationFinishedFence,
+        }
+
+        pi := vk.PresentInfoKHR {
+            sType = .PRESENT_INFO_KHR,
+            //pNext = &spfi,
+            waitSemaphoreCount = 1,
+            pWaitSemaphores = &backbufferFinishedSemaphore,
+            swapchainCount = 1,
+            pSwapchains = &backbufferPool._swapchain,
+            pImageIndices = &backbufferPacket.backbuffer.index,
+        }
+
+        /*if this._device.khr.swapchain.queuePresent(this._generalQueue.queue, &pi) != .SUCCESS {
+            _log(this, .Error, "Failed to present")
+            return false
+        }
+
+        append(&waitFences, presentationFinishedFence)*/
+    }
+
+    this._device.waitForFences(this._device.logical, u32(len(waitFences)), &waitFences[0], true, max(u64))
+
+    this._generalQueue.commandPool->release(commandBuffer, submissionFence)
+    if backbufferPacket.backbuffer != nil {
+        this._defaultFencePool->release(presentationFinishedFence)
+        this._defaultSemaphorePool->release(backbufferFinishedSemaphore)
+        backbufferPool->release(backbufferPacket.backbuffer)
+    }
+
+    return true
 }
 
 /* Vulkan interface */
@@ -2241,4 +2438,69 @@ CommandPool_release :: proc "c" (this: ^CommandPool, commandBuffer: vk.CommandBu
     }
 
     _log(this._renderer, .Warning, "Can't release command buffer: provided command buffer not found in this pool")
+}
+
+BackbufferPool_acquire :: proc "c" (this: ^BackbufferPool) -> ^Backbuffer {
+    if this == nil || this._renderer == nil {
+        return nil
+    }
+
+    context = this._renderer._ctx
+
+    if this._swapchain == 0 {
+        _log(this._renderer, .Error, "Can't acquire backbuffer: backbuffer pool not fully initialized")
+        return nil
+    }
+
+    fence := vk.Fence(0)
+    if this._fencePool != nil {
+        fence = this._fencePool->acquire()
+        if fence == 0 {
+            _log(this._renderer, .Error, "Failed to acquire fence")
+            return nil
+        }
+    }
+
+    semaphore := vk.Semaphore(0)
+    if this._semaphorePool != nil {
+        semaphore = this._semaphorePool->acquire()
+        if semaphore == 0 {
+            _log(this._renderer, .Error, "Failed to acquire semaphore")
+            if fence != 0 {
+                this._fencePool->release(fence)
+            }
+
+            return nil
+        }
+    }
+
+    /* TODO: handle swapchain resizing and non-errors but unfavorable conditions/future errors */
+    imageIndex: u32
+    if this._renderer._device.khr.swapchain.acquireNextImage(this._renderer._device.logical, this._swapchain, max(u64), semaphore, fence, &imageIndex) != .SUCCESS {
+        _log(this._renderer, .Error, "Failed to acquire next image for backbuffer pool")
+        if fence != 0 {
+            this._fencePool->release(fence)
+        }
+        
+        if semaphore != 0 {
+            this._semaphorePool->release(semaphore)
+        }
+        
+        return nil
+    }
+
+    this._backbuffers[imageIndex].fence = fence
+    this._backbuffers[imageIndex].semaphore = semaphore
+
+    return &this._backbuffers[imageIndex]
+}
+
+Backbuffer_release :: proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuffer) {
+    if backbuffer.fence != 0 {
+        this._fencePool->release(backbuffer.fence)
+    }
+    
+    if backbuffer.semaphore != 0 {
+        this._semaphorePool->release(backbuffer.semaphore)
+    }
 }

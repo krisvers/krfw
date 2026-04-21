@@ -208,8 +208,6 @@ Packet :: struct {
     using _: PacketVTable,
 
     renderer:           ^Renderer,
-    instance:           ^Instance,
-    device:             ^Device,
     queue:              ^Queue,
     commandPool:        ^CommandPool,
     commandBuffer:      vk.CommandBuffer,
@@ -308,6 +306,10 @@ ProcRendererGetDefaultFencePool     :: #type proc "c" (this: ^Renderer) -> ^Fenc
 ProcRendererGetDefaultSemaphorePool :: #type proc "c" (this: ^Renderer) -> ^SemaphorePool
 ProcRendererGetDefaultCommandPool   :: #type proc "c" (this: ^Renderer, queueType: QueueType) -> ^CommandPool
 
+ProcRendererGetAllocator    :: #type proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks
+ProcRendererGetInstance     :: #type proc "c" (this: ^Renderer) -> ^Instance
+ProcRendererGetDevice       :: #type proc "c" (this: ^Renderer) -> ^Device
+
 RendererVTable :: struct {
     /* pre-init */
     loadVulkanLoaderOdin:       ProcRendererLoadVulkanLoaderOdin,
@@ -325,4 +327,8 @@ RendererVTable :: struct {
     getDefaultFencePool:        ProcRendererGetDefaultFencePool,
     getDefaultSemaphorePool:    ProcRendererGetDefaultSemaphorePool,
     getDefaultCommandPool:      ProcRendererGetDefaultCommandPool,
+
+    getAllocator:               ProcRendererGetAllocator,
+    getInstance:                ProcRendererGetInstance,
+    getDevice:                  ProcRendererGetDevice,
 }

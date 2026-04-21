@@ -108,6 +108,10 @@ RENDERER := Renderer {
     getDefaultSemaphorePool = Renderer_getDefaultSemaphorePool,
     getDefaultCommandPool   = Renderer_getDefaultCommandPool,
 
+    getAllocator            = Renderer_getAllocator,
+    getInstance             = Renderer_getInstance,
+    getDevice               = Renderer_getDevice,
+
     _ctx                    = runtime.default_context(),
     _library                = VULKAN_LOADER_DEFAULT_HANDLE,
     _allocator              = nil,
@@ -1807,8 +1811,6 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
             },
 
             renderer            = this,
-            instance            = &this._instance,
-            device              = &this._device,
             queue               = this._generalQueue,
             commandPool         = &this._generalQueue.commandPool,
             commandBuffer       = commandBuffer,
@@ -2095,6 +2097,46 @@ Renderer_getDefaultCommandPool :: proc "c" (this: ^Renderer, queueType: QueueTyp
 
     _log(this, .Error, "Can't get default command pool: invalid queue type provided")
     return nil
+}
+
+Renderer_getAllocator :: proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks {
+    if this == nil {
+        return nil
+    }
+
+    context = this._ctx
+
+    return this._allocator
+}
+
+Renderer_getInstance :: proc "c" (this: ^Renderer) -> ^Instance {
+    if this == nil {
+        return nil
+    }
+
+    context = this._ctx
+
+    if this._instance.instance == nil {
+        _log(this, .Error, "Can't get instance: renderer not fully initialized yet")
+        return nil
+    }
+
+    return &this._instance
+}
+
+Renderer_getDevice :: proc "c" (this: ^Renderer) -> ^Device {
+    if this == nil {
+        return nil
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't get device: renderer not fully initialized yet")
+        return nil
+    }
+
+    return &this._device
 }
 
 /* FencePool implementation */

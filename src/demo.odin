@@ -208,6 +208,14 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
         init = krfw.ProcIPassInit(proc "c" (this: ^HelloWorldPass) -> b32 {
             context = this._ctx
 
+            instance := this._renderer->getInstance()
+            assert(instance != nil)
+
+            device := this._renderer->getDevice()
+            assert(device != nil)
+
+            allocator := this._renderer->getAllocator()
+
             vertexData := []f32 {
                 -0.5, -0.5,
                  0.5, -0.5,
@@ -218,27 +226,27 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                 0, 1, 2,
             }
 
-            if this._renderer._device.createBuffer(this._renderer._device.logical, &{
+            if device.createBuffer(device.logical, &{
                 sType = .BUFFER_CREATE_INFO,
                 size = size_of(f32) * 6 + size_of(u32) * 3,
                 usage = { .TRANSFER_SRC },
                 sharingMode = .EXCLUSIVE,
-            }, this._renderer._allocator, &this._uploadBuffer) != .SUCCESS {
+            }, allocator, &this._uploadBuffer) != .SUCCESS {
                 return false
             }
 
-            if this._renderer._device.createBuffer(this._renderer._device.logical, &{
+            if device.createBuffer(device.logical, &{
                 sType = .BUFFER_CREATE_INFO,
                 size = size_of(f32) * 6 + size_of(u32) * 3,
                 usage = { .TRANSFER_DST, .VERTEX_BUFFER, .INDEX_BUFFER },
                 sharingMode = .EXCLUSIVE,
-            }, this._renderer._allocator, &this._privateBuffer) != .SUCCESS {
+            }, allocator, &this._privateBuffer) != .SUCCESS {
                 return false
             }
 
             uploadBufferMemoryRequirements, privateBufferMemoryRequirements: vk.MemoryRequirements
-            this._renderer._device.getBufferMemoryRequirements(this._renderer._device.logical, this._uploadBuffer, &uploadBufferMemoryRequirements)
-            this._renderer._device.getBufferMemoryRequirements(this._renderer._device.logical, this._privateBuffer, &privateBufferMemoryRequirements)
+            device.getBufferMemoryRequirements(device.logical, this._uploadBuffer, &uploadBufferMemoryRequirements)
+            device.getBufferMemoryRequirements(device.logical, this._privateBuffer, &privateBufferMemoryRequirements)
 
             findMemoryType := proc "c" (props: ^vk.PhysicalDeviceMemoryProperties, flags: vk.MemoryPropertyFlags, typeBits: u32) -> u32 {
                 for i in 0..<props.memoryTypeCount {
@@ -251,36 +259,36 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             }
 
             physicalDeviceMemoryProperties: vk.PhysicalDeviceMemoryProperties
-            this._renderer._instance.getPhysicalDeviceMemoryProperties(this._renderer._device.physical, &physicalDeviceMemoryProperties)
+            instance.getPhysicalDeviceMemoryProperties(device.physical, &physicalDeviceMemoryProperties)
 
-            if this._renderer._device.allocateMemory(this._renderer._device.logical, &{
+            if device.allocateMemory(device.logical, &{
                 sType = .MEMORY_ALLOCATE_INFO,
                 allocationSize = uploadBufferMemoryRequirements.size,
                 memoryTypeIndex = findMemoryType(&physicalDeviceMemoryProperties, { .HOST_VISIBLE, .HOST_COHERENT }, uploadBufferMemoryRequirements.memoryTypeBits)
-            }, this._renderer._allocator, &this._uploadMemory) != .SUCCESS {
+            }, allocator, &this._uploadMemory) != .SUCCESS {
                 return false
             }
 
-            if this._renderer._device.allocateMemory(this._renderer._device.logical, &{
+            if device.allocateMemory(device.logical, &{
                 sType = .MEMORY_ALLOCATE_INFO,
                 allocationSize = privateBufferMemoryRequirements.size,
                 memoryTypeIndex = findMemoryType(&physicalDeviceMemoryProperties, { .DEVICE_LOCAL }, privateBufferMemoryRequirements.memoryTypeBits)
-            }, this._renderer._allocator, &this._privateMemory) != .SUCCESS {
+            }, allocator, &this._privateMemory) != .SUCCESS {
                 return false
             }
 
-            if this._renderer._device.mapMemory(this._renderer._device.logical, this._uploadMemory, 0, uploadBufferMemoryRequirements.size, {}, (^rawptr)(&this._uploadMapped)) != .SUCCESS {
+            if device.mapMemory(device.logical, this._uploadMemory, 0, uploadBufferMemoryRequirements.size, {}, (^rawptr)(&this._uploadMapped)) != .SUCCESS {
                 return false
             }
 
             mem.copy_non_overlapping(this._uploadMapped, &vertexData[0], 6 * size_of(f32))
             mem.copy_non_overlapping(mem.ptr_offset(this._uploadMapped, 6 * size_of(f32)), &indexData[0], 3 * size_of(u32))
 
-            if this._renderer._device.bindBufferMemory(this._renderer._device.logical, this._uploadBuffer, this._uploadMemory, 0) != .SUCCESS {
+            if device.bindBufferMemory(device.logical, this._uploadBuffer, this._uploadMemory, 0) != .SUCCESS {
                 return false
             }
             
-            if this._renderer._device.bindBufferMemory(this._renderer._device.logical, this._privateBuffer, this._privateMemory, 0) != .SUCCESS {
+            if device.bindBufferMemory(device.logical, this._privateBuffer, this._privateMemory, 0) != .SUCCESS {
                 return false
             }
 
@@ -288,37 +296,37 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             transferCommandBuffer := transferCommandPool->acquire()
             assert(transferCommandBuffer != nil)
 
-            assert(this._renderer._device.beginCommandBuffer(transferCommandBuffer, &{
+            assert(device.beginCommandBuffer(transferCommandBuffer, &{
                 sType = .COMMAND_BUFFER_BEGIN_INFO,
             }) == .SUCCESS)
 
-            this._renderer._device.cmdCopyBuffer(transferCommandBuffer, this._uploadBuffer, this._privateBuffer, 1, &vk.BufferCopy {
+            device.cmdCopyBuffer(transferCommandBuffer, this._uploadBuffer, this._privateBuffer, 1, &vk.BufferCopy {
                 srcOffset = 0,
                 dstOffset = 0,
                 size = size_of(f32) * 6 + size_of(u32) * 3,
             })
 
-            assert(this._renderer._device.endCommandBuffer(transferCommandBuffer) == .SUCCESS)
+            assert(device.endCommandBuffer(transferCommandBuffer) == .SUCCESS)
 
             transferFence := transferCommandPool->submit(transferCommandBuffer, 0, nil, 0, nil)
             assert(transferFence != 0)
 
-            assert(this._renderer._device.waitForFences(this._renderer._device.logical, 1, &transferFence, true, max(u64)) == .SUCCESS)
+            assert(device.waitForFences(device.logical, 1, &transferFence, true, max(u64)) == .SUCCESS)
             transferCommandPool->release(transferCommandBuffer, transferFence)
 
-            if this._renderer._device.createDescriptorSetLayout(this._renderer._device.logical, &{
+            if device.createDescriptorSetLayout(device.logical, &{
                 sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                 bindingCount = 0,
                 pBindings = nil,
-            }, this._renderer._allocator, &this._descriptorLayout) != .SUCCESS {
+            }, allocator, &this._descriptorLayout) != .SUCCESS {
                 return false
             }
 
-            if this._renderer._device.createPipelineLayout(this._renderer._device.logical, &{
+            if device.createPipelineLayout(device.logical, &{
                 sType = .PIPELINE_LAYOUT_CREATE_INFO,
                 setLayoutCount = 1,
                 pSetLayouts = &this._descriptorLayout,
-            }, this._renderer._allocator, &this._pipelineLayout) != .SUCCESS {
+            }, allocator, &this._pipelineLayout) != .SUCCESS {
                 return false
             }
 
@@ -378,21 +386,26 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
         destroy = krfw.ProcIPassDestroy(proc "c" (this: ^HelloWorldPass) {
             context = this._ctx
 
-            this._renderer._device.deviceWaitIdle(this._renderer._device.logical)
-
-            this._renderer._device.destroyPipeline(this._renderer._device.logical, this._pipeline, this._renderer._allocator)
-            this._renderer._device.destroyPipelineLayout(this._renderer._device.logical, this._pipelineLayout, this._renderer._allocator)
-            this._renderer._device.destroyDescriptorSetLayout(this._renderer._device.logical, this._descriptorLayout, this._renderer._allocator)
-
-            this._renderer._device.destroyShaderModule(this._renderer._device.logical, this._fragmentShader, this._renderer._allocator)
-            this._renderer._device.destroyShaderModule(this._renderer._device.logical, this._vertexShader, this._renderer._allocator)
+            device := this._renderer->getDevice()
+            assert(device != nil)
             
-            this._renderer._device.destroyBuffer(this._renderer._device.logical, this._privateBuffer, this._renderer._allocator)
-            this._renderer._device.freeMemory(this._renderer._device.logical, this._privateMemory, this._renderer._allocator)
+            allocator := this._renderer->getAllocator()
 
-            this._renderer._device.unmapMemory(this._renderer._device.logical, this._uploadMemory)
-            this._renderer._device.destroyBuffer(this._renderer._device.logical, this._uploadBuffer, this._renderer._allocator)
-            this._renderer._device.freeMemory(this._renderer._device.logical, this._uploadMemory, this._renderer._allocator)
+            device.deviceWaitIdle(device.logical)
+
+            device.destroyPipeline(device.logical, this._pipeline, allocator)
+            device.destroyPipelineLayout(device.logical, this._pipelineLayout, allocator)
+            device.destroyDescriptorSetLayout(device.logical, this._descriptorLayout, allocator)
+
+            device.destroyShaderModule(device.logical, this._fragmentShader, allocator)
+            device.destroyShaderModule(device.logical, this._vertexShader, allocator)
+            
+            device.destroyBuffer(device.logical, this._privateBuffer, allocator)
+            device.freeMemory(device.logical, this._privateMemory, allocator)
+
+            device.unmapMemory(device.logical, this._uploadMemory)
+            device.destroyBuffer(device.logical, this._uploadBuffer, allocator)
+            device.freeMemory(device.logical, this._uploadMemory, allocator)
         }),
 
         requiresBackbuffer = krfw.ProcIPassRequiresBackbuffer(proc "c" (this: ^HelloWorldPass) -> b32 {
@@ -403,6 +416,9 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
 
         execute = krfw_vk.ProcPassExecute(proc "c" (this: ^HelloWorldPass, packet: ^krfw_vk.Packet) -> b32 {
             context = this._ctx
+
+            device := packet.renderer->getDevice()
+            allocator := packet.renderer->getAllocator()
 
             if this._pipeline == 0 {
                 pipelineShaderStageCIs := [2]vk.PipelineShaderStageCreateInfo {
@@ -425,7 +441,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                     .SCISSOR,
                 }
 
-                if this._renderer._device.createGraphicsPipelines(this._renderer._device.logical, 0, 1, &vk.GraphicsPipelineCreateInfo {
+                if device.createGraphicsPipelines(device.logical, 0, 1, &vk.GraphicsPipelineCreateInfo {
                     sType = .GRAPHICS_PIPELINE_CREATE_INFO,
                     pNext = &vk.PipelineRenderingCreateInfoKHR {
                         sType = .PIPELINE_RENDERING_CREATE_INFO_KHR,
@@ -486,7 +502,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                         pDynamicStates = &pipelineDynamicStates[0],
                     },
                     layout = this._pipelineLayout,
-                }, this._renderer._allocator, &this._pipeline) != .SUCCESS {
+                }, allocator, &this._pipeline) != .SUCCESS {
                     return false
                 }
             }
@@ -494,7 +510,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             pushDebugLabel(this._renderer, packet.commandBuffer, { 0.88, 0.24, 0.24, 1.0 }, "Hello World Pass")
             defer popDebugLabel(this._renderer, packet.commandBuffer)
 
-            this._renderer._device.cmdPipelineBarrier(packet.commandBuffer,
+            device.cmdPipelineBarrier(packet.commandBuffer,
                 packet.backbufferPacket.lastStage,
                 { .COLOR_ATTACHMENT_OUTPUT }, {},
                 0, nil,
@@ -521,7 +537,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             packet.backbufferPacket.lastStage = { .COLOR_ATTACHMENT_OUTPUT }
             packet.backbufferPacket.lastLayout = .COLOR_ATTACHMENT_OPTIMAL
 
-            this._renderer._device.khr.dynamicRendering.cmdBeginRendering(packet.commandBuffer, &{
+            device.khr.dynamicRendering.cmdBeginRendering(packet.commandBuffer, &{
                 sType = .RENDERING_INFO_KHR,
                 renderArea = {
                     offset = {
@@ -548,9 +564,9 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                 },
             })
 
-            this._renderer._device.cmdBindPipeline(packet.commandBuffer, .GRAPHICS, this._pipeline)
+            device.cmdBindPipeline(packet.commandBuffer, .GRAPHICS, this._pipeline)
 
-            this._renderer._device.cmdSetViewport(packet.commandBuffer, 0, 1, &vk.Viewport {
+            device.cmdSetViewport(packet.commandBuffer, 0, 1, &vk.Viewport {
                 x = 0.0,
                 y = f32(packet.backbufferPacket.backbuffer.extent.height),
                 width = f32(packet.backbufferPacket.backbuffer.extent.width),
@@ -559,7 +575,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                 maxDepth = 1.0,
             })
 
-            this._renderer._device.cmdSetScissor(packet.commandBuffer, 0, 1, &vk.Rect2D {
+            device.cmdSetScissor(packet.commandBuffer, 0, 1, &vk.Rect2D {
                 offset = {
                     x = 0,
                     y = 0,
@@ -568,11 +584,11 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             })
 
             offset := vk.DeviceSize(0)
-            this._renderer._device.cmdBindVertexBuffers(packet.commandBuffer, 0, 1, &this._privateBuffer, &offset)
-            this._renderer._device.cmdBindIndexBuffer(packet.commandBuffer, this._privateBuffer, size_of(f32) * 6, .UINT32)
-            this._renderer._device.cmdDrawIndexed(packet.commandBuffer, 3, 1, 0, 0, 0)
+            device.cmdBindVertexBuffers(packet.commandBuffer, 0, 1, &this._privateBuffer, &offset)
+            device.cmdBindIndexBuffer(packet.commandBuffer, this._privateBuffer, size_of(f32) * 6, .UINT32)
+            device.cmdDrawIndexed(packet.commandBuffer, 3, 1, 0, 0, 0)
 
-            this._renderer._device.khr.dynamicRendering.cmdEndRendering(packet.commandBuffer)
+            device.khr.dynamicRendering.cmdEndRendering(packet.commandBuffer)
 
             return true
         }),

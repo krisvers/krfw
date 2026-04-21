@@ -75,16 +75,16 @@ compileHLSL :: proc "c" (renderer: ^krfw_vk.Renderer, utils: ^dxc.IUtils, compil
     }
 
     arguments: [6]dxc.wstring
-    arguments[0] = cstring16(&wtarget[0])
-    arguments[1] = cstring16(&wtargetValue[0])
-    arguments[2] = cstring16(&wentry[0])
-    arguments[3] = cstring16(&wentryValue[0])
-    arguments[4] = cstring16(&wspirv[0])
+    arguments[0] = dxc.wstring(&wtarget[0])
+    arguments[1] = dxc.wstring(&wtargetValue[0])
+    arguments[2] = dxc.wstring(&wentry[0])
+    arguments[3] = dxc.wstring(&wentryValue[0])
+    arguments[4] = dxc.wstring(&wspirv[0])
 
     argumentCount := u32(5)
 
     when ODIN_DEBUG {
-        arguments[argumentCount] = cstring16(&wdebug[0])
+        arguments[argumentCount] = dxc.wstring(&wdebug[0])
         argumentCount += 1
     }
 
@@ -92,8 +92,8 @@ compileHLSL :: proc "c" (renderer: ^krfw_vk.Renderer, utils: ^dxc.IUtils, compil
     if compiler->Compile(
         blobEncoding,
         nil,
-        cstring16(&wentryValue[0]),
-        cstring16(&wtargetValue[0]),
+        dxc.wstring(&wentryValue[0]),
+        dxc.wstring(&wtargetValue[0]),
         &arguments[0],
         argumentCount,
         nil,

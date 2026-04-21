@@ -256,9 +256,15 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
                     return 0
                 }
 
+                layer := (^vk.CAMetalLayer)(window.nativeWindowHandle)
+                if layer == nil {
+                    _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: Metal layer is nil")
+                    return 0
+                }
+
                 ci := vk.MetalSurfaceCreateInfoEXT {
                     sType = .METAL_SURFACE_CREATE_INFO_EXT,
-                    pLayer = (^vk.CAMetalLayer)(window.nativeWindowHandle),
+                    pLayer = layer,
                 }
 
                 if createMetalSurfaceEXT(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
@@ -272,9 +278,15 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
                     return 0
                 }
 
+                layer := (^vk.CAMetalLayer)(_getCAMetalLayerFromNSWindow(window.nativeWindowHandle))
+                if layer == nil {
+                    _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: Metal layer derived from window is nil")
+                    return 0
+                }
+
                 ci := vk.MetalSurfaceCreateInfoEXT {
                     sType = .METAL_SURFACE_CREATE_INFO_EXT,
-                    pLayer = (^vk.CAMetalLayer)(_getCAMetalLayerFromNSWindow(window.nativeWindowHandle)),
+                    pLayer = layer,
                 }
 
                 if createMetalSurfaceEXT(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {

@@ -113,7 +113,7 @@ RENDERER := Renderer {
     _allocator              = nil,
 }
 
-_logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: string, origin: string) {
+_logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: cstring, origin: cstring) {
     assert(this != nil)
 
     context = this._ctx
@@ -124,43 +124,8 @@ _logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: strin
     if severity < this._debugLoggerLowestSeverity {
         return
     }
-
-    if this._buffers == nil {
-        this._buffers = new(_RendererBuffers)
-    }
     
-    nextAvailableResidentOffset := 0
-    originCString := cstring(nil)
-    originResident := nextAvailableResidentOffset + len(origin) < len(this._debugLoggerBuffer)
-    if originResident {
-        originCString = cstring(&this._debugLoggerBuffer[nextAvailableResidentOffset])
-        mem.copy_non_overlapping(&this._debugLoggerBuffer[nextAvailableResidentOffset], raw_data(origin), len(origin))
-        this._debugLoggerBuffer[nextAvailableResidentOffset + len(origin)] = 0
-        nextAvailableResidentOffset += len(origin) + 1
-    } else {
-        originCString = strings.clone_to_cstring(origin, context.temp_allocator)
-    }
-
-    messageCString := cstring(nil)
-    messageResident := nextAvailableResidentOffset + len(message) < len(this._debugLoggerBuffer)
-    if messageResident {
-        messageCString = cstring(&this._debugLoggerBuffer[nextAvailableResidentOffset])
-        mem.copy_non_overlapping(&this._debugLoggerBuffer[nextAvailableResidentOffset], raw_data(message), len(message))
-        this._debugLoggerBuffer[nextAvailableResidentOffset + len(message)] = 0
-        nextAvailableResidentOffset += len(message) + 1
-    } else {
-        messageCString = strings.clone_to_cstring(message, context.temp_allocator)
-    }
-
-    this._debugLogger(severity, u32(len(origin)), originCString, u32(len(message)), messageCString)
-
-    if !messageResident {
-        delete(messageCString, context.temp_allocator)
-    }
-
-    if !originResident {
-        delete(originCString, context.temp_allocator)
-    }
+    this._debugLogger(severity, u32(len(origin)), origin, u32(len(message)), message)
 }
 
 _logAuto :: proc(this: ^Renderer, severity: krfw.DebugSeverity, format: string, args: ..any, loc := #caller_location) {
@@ -168,21 +133,21 @@ _logAuto :: proc(this: ^Renderer, severity: krfw.DebugSeverity, format: string, 
 
     context = this._ctx
 
-    origin := fmt.tprintf("%s():%d", loc.procedure, loc.line)
+    origin := fmt.ctprintf("%s():%d", loc.procedure, loc.line)
     defer delete(origin, context.temp_allocator)
 
-    message := fmt.tprintf(format, ..args)
+    message := fmt.ctprintf(format, ..args)
     defer delete(message, context.temp_allocator)
 
     _logManual(this, severity, message, origin)
 }
 
-_logAutoExplicitOrigin :: proc(this: ^Renderer, severity: krfw.DebugSeverity, origin: string, format: string, args: ..any) {
+_logAutoExplicitOrigin :: proc(this: ^Renderer, severity: krfw.DebugSeverity, origin: cstring, format: string, args: ..any) {
     assert(this != nil)
 
     context = this._ctx
 
-    message := fmt.tprintf(format, ..args)
+    message := fmt.ctprintf(format, ..args)
     defer delete(message, context.temp_allocator)
 
     _logManual(this, severity, message, origin)
@@ -205,11 +170,13 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
     surface: vk.SurfaceKHR
     when ODIN_OS == .Windows {
         if window.nativeWindowType != .Win32 {
+            _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: not a Win32 window")
             return 0
         }
 
         createWin32SurfaceKHR := vk.ProcCreateWin32SurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateWin32SurfaceKHR"))
         if createWin32SurfaceKHR == nil {
+            _log(this, .Error, "Failed to load vkCreateWin32SurfaceKHR required for creating a Vulkan surface")
             return 0
         }
 
@@ -220,6 +187,7 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
         }
 
         if createWin32SurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+            _log(this, .Error, "Failed to create a Vulkan surface with vkCreateWin32SurfaceKHR")
             return 0
         }
     } else when ODIN_OS == .Linux {
@@ -227,6 +195,7 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
             case .Xlib:
                 createXlibSurfaceKHR := vk.ProcCreateXlibSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateXlibSurfaceKHR"))
                 if createXlibSurfaceKHR == nil {
+                    _log(this, .Error, "Failed to load vkCreateXlibSurfaceKHR required for creating a Vulkan surface")
                     return 0
                 }
 
@@ -237,11 +206,13 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
                 }
 
                 if createXlibSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateXlibSurfaceKHR")
                     return 0
                 }
             case .Xcb:
                 createXcbSurfaceKHR := vk.ProcCreateXcbSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateXcbSurfaceKHR"))
                 if createXcbSurfaceKHR == nil {
+                    _log(this, .Error, "Failed to load vkCreateXcbSurfaceKHR required for creating a Vulkan surface")
                     return 0
                 }
 
@@ -252,11 +223,13 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
                 }
 
                 if createXcbSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateXcbSurfaceKHR")
                     return 0
                 }
             case .Wayland:
                 createWaylandSurfaceKHR := vk.ProcCreateWaylandSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateWaylandSurfaceKHR"))
                 if createWaylandSurfaceKHR == nil {
+                    _log(this, .Error, "Failed to load vkCreateWaylandSurfaceKHR required for creating a Vulkan surface")
                     return 0
                 }
 
@@ -267,9 +240,11 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
                 }
 
                 if createWaylandSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateWaylandSurfaceKHR")
                     return 0
                 }
             case:
+                _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: not a Xlib, Xcb or Wayland window")
                 return 0
         }
     } else when ODIN_OS == .Darwin {
@@ -277,6 +252,7 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
             case .Metal:
                 createMetalSurfaceEXT := vk.ProcCreateMetalSurfaceEXT(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateMetalSurfaceEXT"))
                 if createMetalSurfaceEXT == nil {
+                    _log(this, .Error, "Failed to load vkCreateMetalSurfaceEXT required for creating a Vulkan surface")
                     return 0
                 }
 
@@ -286,11 +262,13 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
                 }
 
                 if createMetalSurfaceEXT(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateMetalSurfaceEXT")
                     return 0
                 }
             case .Cocoa:
                 createMetalSurfaceEXT := vk.ProcCreateMetalSurfaceEXT(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateMetalSurfaceEXT"))
                 if createMetalSurfaceEXT == nil {
+                    _log(this, .Error, "Failed to load vkCreateMetalSurfaceEXT required for creating a Vulkan surface")
                     return 0
                 }
 
@@ -300,9 +278,11 @@ _createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.Surface
                 }
 
                 if createMetalSurfaceEXT(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
+                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateMetalSurfaceEXT")
                     return 0
                 }
             case:
+                _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: not a Metal or Cocoa window")
                 return 0
         }
     }
@@ -579,10 +559,17 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
     foundPortabilityEnumerationKHR := false
     foundDebugUtilsEXT := false
     foundSurfaceKHR, foundGetSurfaceCapabilities2KHR, foundSurfaceMaintenace1EXT, foundPlatformSpecificSurfaceExtension: bool
-    
+
     for &extensionProperties in availableInstanceExtensionProperties {
+        _log(this, .Verbose, "Interview instance extension %s (specification version: %d)", cstring(&extensionProperties.extensionName[0]), extensionProperties.specVersion)\
+
         if this._debug {
             if strings.compare(string(cstring(&extensionProperties.extensionName[0])), "VK_EXT_debug_utils") == 0 {
+                /* extension was advertised twice (sometimes happens with Renderdoc??) */
+                if foundDebugUtilsEXT {
+                    continue
+                }
+
                 foundDebugUtilsEXT = true
 
                 debugUtilsMessengerCI.pNext = next
@@ -1218,7 +1205,6 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
             if ci.queueFamilyIndex == family {
                 deviceQueueIntendedTypes[i] |= { intendedType }
                 if ci.queueCount + 1 < queueFamilyProperties[ci.queueFamilyIndex].queueCount {
-                    uniqueQueueCount^ += 1
                     ci.queueCount += 1
                     return ci.queueCount - 1
                 } else {
@@ -1562,12 +1548,12 @@ _Renderer_finishCreateWSI :: proc(this: ^Renderer, window: ^krfw.Window) -> b32 
         imageColorSpace = surfaceFormats[preferredSurfaceFormat].colorSpace,
         imageExtent = capabilities.currentExtent,
         imageArrayLayers = 1,
-        imageUsage = { .TRANSFER_SRC, .TRANSFER_DST, .SAMPLED, .STORAGE, .COLOR_ATTACHMENT },
+        imageUsage = { .TRANSFER_SRC, .TRANSFER_DST, .COLOR_ATTACHMENT },
         imageSharingMode = .EXCLUSIVE,
         queueFamilyIndexCount = 1,
         pQueueFamilyIndices = &this._presentQueue.family,
         preTransform = { .IDENTITY },
-        compositeAlpha = { .INHERIT },
+        compositeAlpha = { .OPAQUE },
         presentMode = presentModes[preferredPresentMode],
     }
 
@@ -1670,7 +1656,7 @@ Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting :
 
     this._backbufferPools[window^] = {
         acquire = BackbufferPool_acquire,
-        release = Backbuffer_release,
+        release = BackbufferPool_release,
 
         _renderer   = this,
         _window     = window^,
@@ -1783,7 +1769,7 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
             if window == nil {
                 _log(this, .Warning, "Provided pass requires backbuffer, but no window provided; this is likely to cause problems")
             } else if backbufferPacket.backbuffer == nil {
-                backbufferPacket.backbuffer = backbufferPool->acquire()
+                backbufferPacket.backbuffer = backbufferPool->acquire({ .Semaphore })
                 if backbufferPacket.backbuffer == nil {
                     _log(this, .Error, "Failed to acquire backbuffer for pass execution")
                     return false
@@ -1885,7 +1871,7 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
     }
 
     waitFences := make([dynamic]vk.Fence, 1)
-    delete(waitFences)
+    defer delete(waitFences)
 
     waitFences[0] = submissionFence
     
@@ -1901,7 +1887,7 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
 
         pi := vk.PresentInfoKHR {
             sType = .PRESENT_INFO_KHR,
-            //pNext = &spfi,
+            pNext = &spfi,
             waitSemaphoreCount = 1,
             pWaitSemaphores = &backbufferFinishedSemaphore,
             swapchainCount = 1,
@@ -1909,12 +1895,12 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
             pImageIndices = &backbufferPacket.backbuffer.index,
         }
 
-        /*if this._device.khr.swapchain.queuePresent(this._generalQueue.queue, &pi) != .SUCCESS {
+        if this._device.khr.swapchain.queuePresent(this._generalQueue.queue, &pi) != .SUCCESS {
             _log(this, .Error, "Failed to present")
             return false
         }
 
-        append(&waitFences, presentationFinishedFence)*/
+        append(&waitFences, presentationFinishedFence)
     }
 
     this._device.waitForFences(this._device.logical, u32(len(waitFences)), &waitFences[0], true, max(u64))
@@ -2153,16 +2139,13 @@ FencePool_acquire :: proc "c" (this: ^FencePool, signaled := b32(false)) -> vk.F
         return fence
     }
 
-    unusedFenceIndex := this._unusedFenceIndices[0]
+    unusedFenceIndex := pop(&this._unusedFenceIndices)
     fence := this._fences[unusedFenceIndex]
 
     if this._renderer._device.resetFences(this._renderer._device.logical, 1, &fence) != .SUCCESS {
         _log(this._renderer, .Error, "Failed to reset Vulkan fence")
         return 0
     }
-
-    mem.copy(&this._unusedFenceIndices[0], &this._unusedFenceIndices[1], (len(this._unusedFenceIndices) - 1) * size_of(u32))
-    resize(&this._unusedFenceIndices, len(this._unusedFenceIndices) - 1)
 
     return fence
 }
@@ -2183,7 +2166,7 @@ FencePool_release :: proc "c" (this: ^FencePool, fence: vk.Fence) {
                 }
             }
 
-            append(&this._unusedFenceIndices, u32(i))
+            inject_at(&this._unusedFenceIndices, 0, u32(i))
             return
         }
     }
@@ -2240,11 +2223,8 @@ SemaphorePool_acquire :: proc "c" (this: ^SemaphorePool) -> vk.Semaphore {
         return semaphore
     }
 
-    unusedSemaphoreIndex := this._unusedSemaphoreIndices[0]
+    unusedSemaphoreIndex := pop(&this._unusedSemaphoreIndices)
     semaphore := this._semaphores[unusedSemaphoreIndex]
-
-    mem.copy(&this._unusedSemaphoreIndices[0], &this._unusedSemaphoreIndices[1], (len(this._unusedSemaphoreIndices) - 1) * size_of(u32))
-    resize(&this._unusedSemaphoreIndices, len(this._unusedSemaphoreIndices) - 1)
 
     return semaphore
 }
@@ -2265,7 +2245,7 @@ SemaphorePool_release :: proc "c" (this: ^SemaphorePool, semaphore: vk.Semaphore
                 }
             }
 
-            append(&this._unusedSemaphoreIndices, u32(i))
+            inject_at(&this._unusedSemaphoreIndices, 0, u32(i))
             return
         }
     }
@@ -2337,11 +2317,8 @@ CommandPool_acquire :: proc "c" (this: ^CommandPool, bundle := b32(false)) -> vk
         return commandBuffer
     }
 
-    unusedCommandBufferIndex := this._unusedCommandBufferIndices[0]
+    unusedCommandBufferIndex := pop(&this._unusedCommandBufferIndices)
     commandBuffer := this._commandBuffers[unusedCommandBufferIndex]
-    
-    mem.copy(&this._unusedCommandBufferIndices[0], &this._unusedCommandBufferIndices[1], (len(this._unusedCommandBufferIndices) - 1) * size_of(u32))
-    resize(&this._unusedCommandBufferIndices, len(this._unusedCommandBufferIndices) - 1)
 
     return commandBuffer
 }
@@ -2387,8 +2364,8 @@ CommandPool_submit :: proc "c" (this: ^CommandPool, commandBuffer: vk.CommandBuf
     si := vk.SubmitInfo {
         sType = .SUBMIT_INFO,
         waitSemaphoreCount = submitInfoWaitCount,
-        pWaitSemaphores = &waitSemaphores[0],
-        pWaitDstStageMask = &waitDstStageMasks[0],
+        pWaitSemaphores = submitInfoWaitCount == 0 ? nil : &waitSemaphores[0],
+        pWaitDstStageMask = submitInfoWaitCount == 0 ? nil : &waitDstStageMasks[0],
         commandBufferCount = 1,
         pCommandBuffers = &cb,
         signalSemaphoreCount = signalSemaphoreCount,
@@ -2428,7 +2405,7 @@ CommandPool_release :: proc "c" (this: ^CommandPool, commandBuffer: vk.CommandBu
                 }
             }
 
-            append(&this._unusedCommandBufferIndices, u32(i))
+            inject_at(&this._unusedCommandBufferIndices, 0, u32(i))
             if fence != 0 {
                 this._fencePool->release(fence)
             }
@@ -2440,7 +2417,7 @@ CommandPool_release :: proc "c" (this: ^CommandPool, commandBuffer: vk.CommandBu
     _log(this._renderer, .Warning, "Can't release command buffer: provided command buffer not found in this pool")
 }
 
-BackbufferPool_acquire :: proc "c" (this: ^BackbufferPool) -> ^Backbuffer {
+BackbufferPool_acquire :: proc "c" (this: ^BackbufferPool, mode: BackbufferPoolAcquisitionMode) -> ^Backbuffer {
     if this == nil || this._renderer == nil {
         return nil
     }
@@ -2453,7 +2430,12 @@ BackbufferPool_acquire :: proc "c" (this: ^BackbufferPool) -> ^Backbuffer {
     }
 
     fence := vk.Fence(0)
-    if this._fencePool != nil {
+    if .Fence in mode {
+        if this._fencePool == nil {
+            _log(this._renderer, .Error, "Fence requested, but this backbuffer pool was not initialized with a fence pool")
+            return nil
+        }
+
         fence = this._fencePool->acquire()
         if fence == 0 {
             _log(this._renderer, .Error, "Failed to acquire fence")
@@ -2462,7 +2444,12 @@ BackbufferPool_acquire :: proc "c" (this: ^BackbufferPool) -> ^Backbuffer {
     }
 
     semaphore := vk.Semaphore(0)
-    if this._semaphorePool != nil {
+    if .Semaphore in mode {
+        if this._semaphorePool == nil {
+            _log(this._renderer, .Error, "Semaphore requested, but this backbuffer pool was not initialized with a semaphore pool")
+            return nil
+        }
+
         semaphore = this._semaphorePool->acquire()
         if semaphore == 0 {
             _log(this._renderer, .Error, "Failed to acquire semaphore")
@@ -2495,7 +2482,7 @@ BackbufferPool_acquire :: proc "c" (this: ^BackbufferPool) -> ^Backbuffer {
     return &this._backbuffers[imageIndex]
 }
 
-Backbuffer_release :: proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuffer) {
+BackbufferPool_release :: proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuffer) {
     if backbuffer.fence != 0 {
         this._fencePool->release(backbuffer.fence)
     }

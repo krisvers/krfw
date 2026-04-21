@@ -168,6 +168,13 @@ Backbuffer :: struct {
     semaphore:      vk.Semaphore,
 }
 
+BackbufferPoolAcquisitionModeValues :: enum u32 {
+    Fence = 0,
+    Semaphore = 1,
+}
+
+BackbufferPoolAcquisitionMode :: bit_set[BackbufferPoolAcquisitionModeValues; u32]
+
 BackbufferPool :: struct {
     using _: BackbufferPoolVTable,
 
@@ -182,7 +189,7 @@ BackbufferPool :: struct {
     _backbuffers:   []Backbuffer,
 }
 
-ProcBackbufferPoolAcquire :: #type proc "c" (this: ^BackbufferPool) -> ^Backbuffer
+ProcBackbufferPoolAcquire :: #type proc "c" (this: ^BackbufferPool, mode: BackbufferPoolAcquisitionMode) -> ^Backbuffer
 ProcBackbufferPoolRelease :: #type proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuffer)
 
 BackbufferPoolVTable :: struct {
@@ -233,7 +240,6 @@ PassVTable :: struct {
 
 /* internal use only */
 _RendererBuffers :: struct {
-    _debugLoggerBuffer: [2048]u8,
     _driverPreference:  [vk.MAX_DRIVER_NAME_SIZE]u8,
 }
 

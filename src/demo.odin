@@ -75,16 +75,16 @@ compileHLSL :: proc "c" (renderer: ^krfw_vk.Renderer, utils: ^dxc.IUtils, compil
     }
 
     arguments: [6]dxc.wstring
-    arguments[0] = &wtarget[0]
-    arguments[1] = &wtargetValue[0]
-    arguments[2] = &wentry[0]
-    arguments[3] = &wentryValue[0]
-    arguments[4] = &wspirv[0]
+    arguments[0] = cstring16(&wtarget[0])
+    arguments[1] = cstring16(&wtargetValue[0])
+    arguments[2] = cstring16(&wentry[0])
+    arguments[3] = cstring16(&wentryValue[0])
+    arguments[4] = cstring16(&wspirv[0])
 
     argumentCount := u32(5)
 
     when ODIN_DEBUG {
-        arguments[argumentCount] = &wdebug[0]
+        arguments[argumentCount] = cstring16(&wdebug[0])
         argumentCount += 1
     }
 
@@ -92,8 +92,8 @@ compileHLSL :: proc "c" (renderer: ^krfw_vk.Renderer, utils: ^dxc.IUtils, compil
     if compiler->Compile(
         blobEncoding,
         nil,
-        &wentryValue[0],
-        &wtargetValue[0],
+        cstring16(&wentryValue[0]),
+        cstring16(&wtargetValue[0]),
         &arguments[0],
         argumentCount,
         nil,
@@ -163,9 +163,29 @@ compileHLSL :: proc "c" (renderer: ^krfw_vk.Renderer, utils: ^dxc.IUtils, compil
     return module, .SUCCESS
 }
 
+pushDebugLabel :: proc(renderer: ^krfw_vk.Renderer, commandBuffer: vk.CommandBuffer, color: [4]f32, format: string, args: ..any) {
+    if renderer._instance.ext.debugUtils.cmdBeginDebugUtilsLabel != nil {
+        labelName := fmt.ctprintf(format, ..args)
+        defer delete(labelName, context.temp_allocator)
+
+        renderer._instance.ext.debugUtils.cmdBeginDebugUtilsLabel(commandBuffer, &{
+            sType = .DEBUG_UTILS_LABEL_EXT,
+            pLabelName = labelName,
+            color = color,
+        })
+    }
+}
+
+popDebugLabel :: proc(renderer: ^krfw_vk.Renderer, commandBuffer: vk.CommandBuffer) {
+    if renderer._instance.ext.debugUtils.cmdEndDebugUtilsLabel != nil {
+        renderer._instance.ext.debugUtils.cmdEndDebugUtilsLabel(commandBuffer)
+    }
+}
+
 HelloWorldPass :: struct {
     using vk_pass:  krfw_vk.Pass,
 
+    _ctx:               runtime.Context,
     _renderer:          ^krfw_vk.Renderer,
     _uploadBuffer:      vk.Buffer,
     _uploadMemory:      vk.DeviceMemory,
@@ -186,6 +206,8 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
 
     pass^ = {
         init = krfw.ProcIPassInit(proc "c" (this: ^HelloWorldPass) -> b32 {
+            context = this._ctx
+
             vertexData := []f32 {
                 -0.5, -0.5,
                  0.5, -0.5,
@@ -251,8 +273,8 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                 return false
             }
 
-            mem.copy_non_overlapping(this._uploadMapped, &vertexData[0], len(vertexData) * size_of(f32))
-            mem.copy_non_overlapping(mem.ptr_offset(this._uploadMapped, len(vertexData) * size_of(f32)), &indexData[0], len(indexData) * size_of(u32))
+            mem.copy_non_overlapping(this._uploadMapped, &vertexData[0], 6 * size_of(f32))
+            mem.copy_non_overlapping(mem.ptr_offset(this._uploadMapped, 6 * size_of(f32)), &indexData[0], 3 * size_of(u32))
 
             if this._renderer._device.bindBufferMemory(this._renderer._device.logical, this._uploadBuffer, this._uploadMemory, 0) != .SUCCESS {
                 return false
@@ -261,6 +283,28 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             if this._renderer._device.bindBufferMemory(this._renderer._device.logical, this._privateBuffer, this._privateMemory, 0) != .SUCCESS {
                 return false
             }
+
+            transferCommandPool := this._renderer->getDefaultCommandPool(.Transfer)
+            transferCommandBuffer := transferCommandPool->acquire()
+            assert(transferCommandBuffer != nil)
+
+            assert(this._renderer._device.beginCommandBuffer(transferCommandBuffer, &{
+                sType = .COMMAND_BUFFER_BEGIN_INFO,
+            }) == .SUCCESS)
+
+            this._renderer._device.cmdCopyBuffer(transferCommandBuffer, this._uploadBuffer, this._privateBuffer, 1, &vk.BufferCopy {
+                srcOffset = 0,
+                dstOffset = 0,
+                size = size_of(f32) * 6 + size_of(u32) * 3,
+            })
+
+            assert(this._renderer._device.endCommandBuffer(transferCommandBuffer) == .SUCCESS)
+
+            transferFence := transferCommandPool->submit(transferCommandBuffer, 0, nil, 0, nil)
+            assert(transferFence != 0)
+
+            assert(this._renderer._device.waitForFences(this._renderer._device.logical, 1, &transferFence, true, max(u64)) == .SUCCESS)
+            transferCommandPool->release(transferCommandBuffer, transferFence)
 
             if this._renderer._device.createDescriptorSetLayout(this._renderer._device.logical, &{
                 sType = .DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -332,14 +376,34 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
         }),
 
         destroy = krfw.ProcIPassDestroy(proc "c" (this: ^HelloWorldPass) {
+            context = this._ctx
 
+            this._renderer._device.deviceWaitIdle(this._renderer._device.logical)
+
+            this._renderer._device.destroyPipeline(this._renderer._device.logical, this._pipeline, this._renderer._allocator)
+            this._renderer._device.destroyPipelineLayout(this._renderer._device.logical, this._pipelineLayout, this._renderer._allocator)
+            this._renderer._device.destroyDescriptorSetLayout(this._renderer._device.logical, this._descriptorLayout, this._renderer._allocator)
+
+            this._renderer._device.destroyShaderModule(this._renderer._device.logical, this._fragmentShader, this._renderer._allocator)
+            this._renderer._device.destroyShaderModule(this._renderer._device.logical, this._vertexShader, this._renderer._allocator)
+            
+            this._renderer._device.destroyBuffer(this._renderer._device.logical, this._privateBuffer, this._renderer._allocator)
+            this._renderer._device.freeMemory(this._renderer._device.logical, this._privateMemory, this._renderer._allocator)
+
+            this._renderer._device.unmapMemory(this._renderer._device.logical, this._uploadMemory)
+            this._renderer._device.destroyBuffer(this._renderer._device.logical, this._uploadBuffer, this._renderer._allocator)
+            this._renderer._device.freeMemory(this._renderer._device.logical, this._uploadMemory, this._renderer._allocator)
         }),
 
         requiresBackbuffer = krfw.ProcIPassRequiresBackbuffer(proc "c" (this: ^HelloWorldPass) -> b32 {
+            context = this._ctx
+
             return true
         }),
 
         execute = krfw_vk.ProcPassExecute(proc "c" (this: ^HelloWorldPass, packet: ^krfw_vk.Packet) -> b32 {
+            context = this._ctx
+
             if this._pipeline == 0 {
                 pipelineShaderStageCIs := [2]vk.PipelineShaderStageCreateInfo {
                     {
@@ -376,7 +440,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                         pVertexBindingDescriptions = &vk.VertexInputBindingDescription {
                             binding = 0,
                             stride = size_of(f32) * 2,
-                            inputRate = .INSTANCE,
+                            inputRate = .VERTEX,
                         },
                         vertexAttributeDescriptionCount = 1,
                         pVertexAttributeDescriptions = &vk.VertexInputAttributeDescription {
@@ -413,6 +477,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                         attachmentCount = 1,
                         pAttachments = &vk.PipelineColorBlendAttachmentState {
                             blendEnable = false,
+                            colorWriteMask = { .R, .G, .B, .A },
                         },
                     },
                     pDynamicState = &{
@@ -425,6 +490,9 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                     return false
                 }
             }
+
+            pushDebugLabel(this._renderer, packet.commandBuffer, { 0.88, 0.24, 0.24, 1.0 }, "Hello World Pass")
+            defer popDebugLabel(this._renderer, packet.commandBuffer)
 
             this._renderer._device.cmdPipelineBarrier(packet.commandBuffer,
                 packet.backbufferPacket.lastStage,
@@ -509,6 +577,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             return true
         }),
         
+        _ctx = context,
         _renderer = renderer,
     }
 }
@@ -523,6 +592,8 @@ main :: proc() {
         panic("SDL3 window creation")
     }
 
+    krfwWindow := getKRFWWindow(window)
+
     renderer: krfw_vk.Renderer
     krfw_vk.instantiateRenderer(&renderer)
 
@@ -531,10 +602,7 @@ main :: proc() {
         fmt.printfln("[%s] (%s): %s", severity, origin, message)
     }, krfw.DebugSeverity.Verbose)
 
-    if !renderer->createWSI(&{
-        nativeWindowHandle = krfw.NativeWindowHandle(sdl3.GetPointerProperty(sdl3.GetWindowProperties(window), sdl3.PROP_WINDOW_COCOA_WINDOW_POINTER, nil)),
-        nativeWindowType = .Cocoa,
-    }, .Mailbox) {
+    if !renderer->createWSI(&krfwWindow, .Mailbox) {
         panic("Renderer create WSI")
     }
 
@@ -560,20 +628,12 @@ main :: proc() {
         }
 
         passes := []^krfw.IPass { &helloWorldPass }
-        if !renderer->executePasses(u32(len(passes)), &passes[0], &{
-            nativeWindowHandle = krfw.NativeWindowHandle(sdl3.GetPointerProperty(sdl3.GetWindowProperties(window), sdl3.PROP_WINDOW_COCOA_WINDOW_POINTER, nil)),
-            nativeWindowType = .Cocoa,
-        }) {
+        if !renderer->executePasses(u32(len(passes)), &passes[0], &krfwWindow) {
             panic("shit")
         }
     }
 
     helloWorldPass->destroy()
-
-    renderer->destroyWSI(&{
-        nativeWindowHandle = krfw.NativeWindowHandle(sdl3.GetPointerProperty(sdl3.GetWindowProperties(window), sdl3.PROP_WINDOW_COCOA_WINDOW_POINTER, nil)),
-        nativeWindowType = .Cocoa,
-    })
-
+    renderer->destroyWSI(&krfwWindow)
     renderer->destroy()
 }

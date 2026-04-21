@@ -5,6 +5,7 @@ import "core:dynlib"
 
 import "../../krfw"
 import vk "vendor:vulkan"
+import "vma"
 
 /* instance function pointer management */
 InstanceKHRFunctions :: struct {
@@ -270,6 +271,7 @@ Renderer :: struct {
     _debug:             bool,
     _instance:          Instance,
     _device:            Device,
+    _vma:               vma.Allocator,
     _backbufferPools:   map[krfw.Window]BackbufferPool,
 
     /* note: queues may be aliases of one another */

@@ -11,6 +11,7 @@ import "core:unicode/utf8"
 
 import "../../krfw"
 import vk "vendor:vulkan"
+import "vma"
 
 VERSION_PATCH_VULKAN :: 0
 
@@ -1386,6 +1387,13 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
         }
     }
 
+    if vma.create_allocator({
+
+    }, &this._vma) != .SUCCESS {
+        _log(this, .Fatal, "Failed to create VMA allocator")
+        return false
+    }
+
     return true
 }
 
@@ -1400,6 +1408,10 @@ Renderer_destroy :: proc "c" (this: ^Renderer) {
     if this._device.logical != nil {
         if this._device.deviceWaitIdle != nil {
             this._device.deviceWaitIdle(this._device.logical)
+        }
+
+        if this._vma != nil {
+            vma.destroy_allocator(this._vma)
         }
 
         for &queue in this._queues {

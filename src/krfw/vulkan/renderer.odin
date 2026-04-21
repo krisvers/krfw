@@ -766,7 +766,8 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
     if this._areWindowsQueued {
         for &w in this._queuedWindows {
             if !this->createWSI(&w.window, w.setting) {
-                _log(this, .Error, "Failed to create queued window WSI")
+                _log(this, .Fatal, "Failed to create queued window WSI")
+                return false
             }
         }
 

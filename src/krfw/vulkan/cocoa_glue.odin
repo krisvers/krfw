@@ -9,7 +9,7 @@ _getCAMetalLayerFromNSWindow :: proc(nsWindow: rawptr) -> ^ca.MetalLayer {
 
     layer := window->contentView()->layer()
     if layer == nil {
-        layer := ca.MetalLayer.layer()
+        layer = ca.MetalLayer.layer()
         window->contentView()->setLayer(layer)
     }
 

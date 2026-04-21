@@ -34,8 +34,10 @@ when ODIN_OS == .Windows {
     }
 }
 
-compileHLSL :: proc "c" (renderer: ^krfw_vk.Renderer, utils: ^dxc.IUtils, compiler: ^dxc.ICompiler, source: cstring, entry_point: cstring, stage: vk.ShaderStageFlags) -> (module: vk.ShaderModule, result: vk.Result) {
-    context = renderer._ctx
+compileHLSL :: proc(renderer: ^krfw_vk.Renderer, utils: ^dxc.IUtils, compiler: ^dxc.ICompiler, source: cstring, entry_point: cstring, stage: vk.ShaderStageFlags) -> (module: vk.ShaderModule, result: vk.Result) {
+    allocator := renderer->getAllocator()
+    device := renderer->getDevice()
+    assert(device != nil)
 
     blobEncoding: ^dxc.IBlobEncoding
     if utils->CreateBlob(rawptr(source), u32(len(source)), dxc.CP_UTF8, &blobEncoding) != 0 {
@@ -150,11 +152,11 @@ compileHLSL :: proc "c" (renderer: ^krfw_vk.Renderer, utils: ^dxc.IUtils, compil
     size := int(blob->GetBufferSize())
     code := ([^]u32)(blob->GetBufferPointer())
 
-    result = renderer._device.createShaderModule(renderer._device.logical, &{
+    result = device.createShaderModule(device.logical, &{
         sType = .SHADER_MODULE_CREATE_INFO,
         codeSize = size,
         pCode = code
-    }, renderer._allocator, &module)
+    }, allocator, &module)
 
     if result != .SUCCESS {
         return 0, result

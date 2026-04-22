@@ -237,16 +237,40 @@ PassVTable :: struct {
     execute: ProcPassExecute,
 }
 
+/* resource pool */
+ResourcePool :: struct {
+    using _:        ResourcePoolVTable,
+
+    _renderer:      ^Renderer,
+    _pool:          vma.Pool,
+
+    _isInternal:    b32,
+}
+
+ProcResourcePoolDestroy         :: #type proc "c" (this: ^ResourcePool)
+ProcResourcePoolCreateBuffer    :: #type proc "c" (this: ^ResourcePool, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32
+ProcResourcePoolCreateImage     :: #type proc "c" (this: ^ResourcePool, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32
+
+ResourcePoolVTable :: struct {
+    destroy:        ProcResourcePoolDestroy,
+    createBuffer:   ProcResourcePoolCreateBuffer,
+    createImage:    ProcResourcePoolCreateImage,
+}
+
 /* resources */
 IResource :: struct {
     using _:        IResourceVTable,
 
-    _renderer:      ^Renderer,
+    _pool:          ^ResourcePool,
     _allocation:    vma.Allocation,
 }
 
 ProcIResourceDestroy            :: #type proc "c" (this: ^IResource)
 ProcIResourceGetAllocationInfo  :: #type proc "c" (this: ^IResource, allocationInfo: ^vma.Allocation_Info) -> b32
+ProcIResourceMap                :: #type proc "c" (this: ^IResource) -> rawptr
+ProcIResourceUnmap              :: #type proc "c" (this: ^IResource)
+ProcIResourceFlush              :: #type proc "c" (this: ^IResource) -> b32
+ProcIResourceInvalidate         :: #type proc "c" (this: ^IResource) -> b32
 
 IResourceVTable :: struct {
     destroy:            ProcIResourceDestroy,
@@ -261,7 +285,7 @@ Buffer :: struct {
     _buffer:            vk.Buffer,
 }
 
-ProcBufferGetVulkanBuffer :: #type proc "c" (this: ^Buffer) -> vk.Buffer
+ProcBufferGetVulkanBuffer   :: #type proc "c" (this: ^Buffer) -> vk.Buffer
 
 BufferVTable :: struct {
     getVulkanBuffer: ProcBufferGetVulkanBuffer,
@@ -273,12 +297,17 @@ Image :: struct {
     using _:            ImageVTable,
 
     _image:             vk.Image,
+    _layout:            vk.ImageLayout,
 }
 
-ProcBufferGetVulkanImage :: #type proc "c" (this: ^Image) -> vk.Image
+ProcImageGetVulkanImage :: #type proc "c" (this: ^Image) -> vk.Image
+ProcImageGetLayout      :: #type proc "c" (this: ^Image) -> vk.ImageLayout
+ProcImageSetLayout      :: #type proc "c" (this: ^Image, layout: vk.ImageLayout)
 
 ImageVTable :: struct {
-    getVulkanImage: ProcBufferGetVulkanImage,
+    getVulkanImage: ProcImageGetVulkanImage,
+    getLayout:      ProcImageGetLayout,
+    setLayout:      ProcImageSetLayout,
 }
 
 /* internal use only */
@@ -347,17 +376,16 @@ ProcRendererSetAllocator            :: #type proc "c" (this: ^Renderer, allocato
 ProcRendererCreateFencePool         :: #type proc "c" (this: ^Renderer, fencePool: ^FencePool) -> b32
 ProcRendererCreateSemaphorePool     :: #type proc "c" (this: ^Renderer, semaphorePool: ^SemaphorePool) -> b32
 ProcRendererCreateCommandPool       :: #type proc "c" (this: ^Renderer, commandPool: ^CommandPool, fencePool: ^FencePool, queue: ^Queue) -> b32
+ProcRendererCreateResourcePool      :: #type proc "c" (this: ^Renderer, resourcePool: ^ResourcePool, createInfo: ^vma.Pool_Create_Info) -> b32
 
 ProcRendererGetDefaultFencePool     :: #type proc "c" (this: ^Renderer) -> ^FencePool
 ProcRendererGetDefaultSemaphorePool :: #type proc "c" (this: ^Renderer) -> ^SemaphorePool
 ProcRendererGetDefaultCommandPool   :: #type proc "c" (this: ^Renderer, queueType: QueueType) -> ^CommandPool
+ProcRendererGetDefaultResourcePool  :: #type proc "c" (this: ^Renderer) -> ^ResourcePool
 
 ProcRendererGetAllocator            :: #type proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks
 ProcRendererGetInstance             :: #type proc "c" (this: ^Renderer) -> ^Instance
 ProcRendererGetDevice               :: #type proc "c" (this: ^Renderer) -> ^Device
-
-ProcRendererCreateBuffer            :: #type proc "c" (this: ^Renderer, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32
-ProcRendererCreateImage             :: #type proc "c" (this: ^Renderer, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32
 
 RendererVTable :: struct {
     /* pre-init */
@@ -372,15 +400,14 @@ RendererVTable :: struct {
     createFencePool:            ProcRendererCreateFencePool,
     createSemaphorePool:        ProcRendererCreateSemaphorePool,
     createCommandPool:          ProcRendererCreateCommandPool,
+    createResourcePool:         ProcRendererCreateResourcePool,
 
     getDefaultFencePool:        ProcRendererGetDefaultFencePool,
     getDefaultSemaphorePool:    ProcRendererGetDefaultSemaphorePool,
     getDefaultCommandPool:      ProcRendererGetDefaultCommandPool,
+    getDefaultResourcePool:     ProcRendererGetDefaultResourcePool,
 
     getAllocator:               ProcRendererGetAllocator,
     getInstance:                ProcRendererGetInstance,
     getDevice:                  ProcRendererGetDevice,
-
-    createBuffer:               ProcRendererCreateBuffer,
-    createImage:                ProcRendererCreateImage,
 }

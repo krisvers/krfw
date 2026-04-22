@@ -2163,98 +2163,6 @@ Renderer_getDevice :: proc "c" (this: ^Renderer) -> ^Device {
     return &this._device
 }
 
-Renderer_createBuffer :: proc "c" (this: ^Renderer, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32 {
-    if this == nil {
-        return false
-    }
-
-    context = this._ctx
-
-    if this._vma == nil {
-        _log(this, .Error, "Can't create buffer: renderer is not fully initialized")
-        return false
-    }
-
-    if buffer == nil {
-        _log(this, .Error, "Provided buffer pointer is invalid")
-        return false
-    }
-
-    if createInfo == nil {
-        _log(this, .Error, "Provided create info pointer is invalid")
-        return false
-    }
-
-    if allocationInfo == nil {
-        _log(this, .Error, "Provided allocation info pointer is invalid")
-        return false
-    }
-
-    vkBuffer: vk.Buffer
-    allocation: vma.Allocation
-    if vma.create_buffer(this._vma, createInfo^, allocationInfo^, &vkBuffer, &allocation, nil) != .SUCCESS {
-        _log(this, .Error, "Failed to create and allocate buffer")
-        return false
-    }
-
-    buffer^ = {
-        destroy             = ProcIResourceDestroy(Buffer_destroy),
-        getAllocationInfo   = IResource_getAllocationInfo,
-        getVulkanBuffer     = Buffer_getVulkanBuffer,
-
-        _allocation         = allocation,
-        _buffer             = vkBuffer,
-    }
-
-    return true
-}
-
-Renderer_createImage :: proc "c" (this: ^Renderer, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32 {
-    if this == nil {
-        return false
-    }
-
-    context = this._ctx
-
-    if this._vma == nil {
-        _log(this, .Error, "Can't create image: renderer is not fully initialized")
-        return false
-    }
-
-    if image == nil {
-        _log(this, .Error, "Provided image pointer is invalid")
-        return false
-    }
-
-    if createInfo == nil {
-        _log(this, .Error, "Provided create info pointer is invalid")
-        return false
-    }
-
-    if allocationInfo == nil {
-        _log(this, .Error, "Provided allocation info pointer is invalid")
-        return false
-    }
-
-    vkImage: vk.Image
-    allocation: vma.Allocation
-    if vma.create_image(this._vma, createInfo^, allocationInfo^, &vkImage, &allocation, nil) != .SUCCESS {
-        _log(this, .Error, "Failed to create and allocate buffer")
-        return false
-    }
-
-    image^ = {
-        destroy             = ProcIResourceDestroy(Image_destroy),
-        getAllocationInfo   = IResource_getAllocationInfo,
-        getVulkanImage      = Image_getVulkanImage,
-
-        _allocation         = allocation,
-        _image              = vkImage,
-    }
-
-    return true
-}
-
 /* FencePool implementation */
 FencePool_destroy :: proc "c" (this: ^FencePool) {
     if this == nil || this._renderer == nil {
@@ -2661,6 +2569,115 @@ BackbufferPool_release :: proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuff
     if backbuffer.semaphore != 0 {
         this._semaphorePool->release(backbuffer.semaphore)
     }
+}
+
+/* ResourcePool implementation */
+ResourcePool_destroy :: proc "c" (this: ^ResourcePool) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+
+    context = this._renderer._ctx
+
+    if this._isInternal {
+        if this._renderer._performingDestruction {
+            return
+        }
+        
+        _log(this._renderer, .Error, "Can't destroy this resource pool as it is internally managed by the renderer")
+        return
+    }
+
+    vma.destroy_pool(this._renderer._vma, this._pool)
+    this._pool = nil
+}
+
+ResourcePool_createBuffer :: proc "c" (this: ^ResourcePool, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32 {
+    if this == nil || this._renderer == nil {
+        return false
+    }
+
+    context = this._renderer._ctx
+
+    if buffer == nil {
+        _log(this._renderer, .Error, "Provided buffer pointer is invalid")
+        return false
+    }
+
+    if createInfo == nil {
+        _log(this._renderer, .Error, "Provided create info pointer is invalid")
+        return false
+    }
+
+    if allocationInfo == nil {
+        _log(this._renderer, .Error, "Provided allocation info pointer is invalid")
+        return false
+    }
+
+    ai := allocationInfo^
+    ai.pool = this._pool
+
+    vkBuffer: vk.Buffer
+    allocation: vma.Allocation
+    if vma.create_buffer(this._renderer._vma, createInfo^, ai, &vkBuffer, &allocation, nil) != .SUCCESS {
+        _log(this._renderer, .Error, "Failed to create and allocate buffer")
+        return false
+    }
+
+    buffer^ = {
+        destroy             = ProcIResourceDestroy(Buffer_destroy),
+        getAllocationInfo   = IResource_getAllocationInfo,
+        getVulkanBuffer     = Buffer_getVulkanBuffer,
+
+        _allocation         = allocation,
+        _buffer             = vkBuffer,
+    }
+
+    return true
+}
+
+ResourcePool_createImage :: proc "c" (this: ^ResourcePool, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32 {
+    if this == nil || this._renderer == nil {
+        return false
+    }
+
+    context = this._renderer._ctx
+
+    if image == nil {
+        _log(this._renderer, .Error, "Provided image pointer is invalid")
+        return false
+    }
+
+    if createInfo == nil {
+        _log(this._renderer, .Error, "Provided create info pointer is invalid")
+        return false
+    }
+
+    if allocationInfo == nil {
+        _log(this._renderer, .Error, "Provided allocation info pointer is invalid")
+        return false
+    }
+
+    ai := allocationInfo^
+    ai.pool = this._pool
+
+    vkImage: vk.Image
+    allocation: vma.Allocation
+    if vma.create_image(this._renderer._vma, createInfo^, ai, &vkImage, &allocation, nil) != .SUCCESS {
+        _log(this._renderer, .Error, "Failed to create and allocate buffer")
+        return false
+    }
+
+    image^ = {
+        destroy             = ProcIResourceDestroy(Image_destroy),
+        getAllocationInfo   = IResource_getAllocationInfo,
+        getVulkanImage      = Image_getVulkanImage,
+
+        _allocation         = allocation,
+        _image              = vkImage,
+    }
+
+    return true
 }
 
 /* IResource implementation */

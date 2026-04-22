@@ -316,8 +316,9 @@ Device_Memory_Callbacks :: struct {
 
 // Pointers to some Vulkan procedures - a subset used by the library.
 Vulkan_Functions :: struct {
-	_unused_1:                                  proc(), // vk.ProcGetInstanceProcAddr
-	_unused_2:                                  proc(), // vk.ProcGetDeviceProcAddr
+	/* NOTE: modified from original code to add support for VMA dynamic loading */
+	get_instance_proc_addr:                     vk.ProcGetInstanceProcAddr,
+	get_device_proc_addr:                       vk.ProcGetDeviceProcAddr,
 	get_physical_device_properties:             vk.ProcGetPhysicalDeviceProperties,
 	get_physical_device_memory_properties:      vk.ProcGetPhysicalDeviceMemoryProperties,
 	allocate_memory:                            vk.ProcAllocateMemory,

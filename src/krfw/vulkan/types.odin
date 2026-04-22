@@ -237,6 +237,50 @@ PassVTable :: struct {
     execute: ProcPassExecute,
 }
 
+/* resources */
+IResource :: struct {
+    using _:        IResourceVTable,
+
+    _renderer:      ^Renderer,
+    _allocation:    vma.Allocation,
+}
+
+ProcIResourceDestroy            :: #type proc "c" (this: ^IResource)
+ProcIResourceGetAllocationInfo  :: #type proc "c" (this: ^IResource, allocationInfo: ^vma.Allocation_Info) -> b32
+
+IResourceVTable :: struct {
+    destroy:            ProcIResourceDestroy,
+    getAllocationInfo:  ProcIResourceGetAllocationInfo,
+}
+
+/* buffer */
+Buffer :: struct {
+    using iresource:    IResource,
+    using _:            BufferVTable,
+
+    _buffer:            vk.Buffer,
+}
+
+ProcBufferGetVulkanBuffer :: #type proc "c" (this: ^Buffer) -> vk.Buffer
+
+BufferVTable :: struct {
+    getVulkanBuffer: ProcBufferGetVulkanBuffer,
+}
+
+/* image */
+Image :: struct {
+    using iresource:    IResource,
+    using _:            ImageVTable,
+
+    _image:             vk.Image,
+}
+
+ProcBufferGetVulkanImage :: #type proc "c" (this: ^Image) -> vk.Image
+
+ImageVTable :: struct {
+    getVulkanImage: ProcBufferGetVulkanImage,
+}
+
 /* internal use only */
 _RendererBuffers :: struct {
     _driverPreference:  [vk.MAX_DRIVER_NAME_SIZE]u8,
@@ -300,17 +344,20 @@ ProcRendererSetDriverPreference     :: #type proc "c" (this: ^Renderer, len: u32
 ProcRendererSetAllocator            :: #type proc "c" (this: ^Renderer, allocator: ^vk.AllocationCallbacks)
 
 /* Renderer Vulkan interface functions */
-ProcRendererCreateFencePool     :: #type proc "c" (this: ^Renderer, fencePool: ^FencePool) -> b32
-ProcRendererCreateSemaphorePool :: #type proc "c" (this: ^Renderer, semaphorePool: ^SemaphorePool) -> b32
-ProcRendererCreateCommandPool   :: #type proc "c" (this: ^Renderer, commandPool: ^CommandPool, fencePool: ^FencePool, queue: ^Queue) -> b32
+ProcRendererCreateFencePool         :: #type proc "c" (this: ^Renderer, fencePool: ^FencePool) -> b32
+ProcRendererCreateSemaphorePool     :: #type proc "c" (this: ^Renderer, semaphorePool: ^SemaphorePool) -> b32
+ProcRendererCreateCommandPool       :: #type proc "c" (this: ^Renderer, commandPool: ^CommandPool, fencePool: ^FencePool, queue: ^Queue) -> b32
 
 ProcRendererGetDefaultFencePool     :: #type proc "c" (this: ^Renderer) -> ^FencePool
 ProcRendererGetDefaultSemaphorePool :: #type proc "c" (this: ^Renderer) -> ^SemaphorePool
 ProcRendererGetDefaultCommandPool   :: #type proc "c" (this: ^Renderer, queueType: QueueType) -> ^CommandPool
 
-ProcRendererGetAllocator    :: #type proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks
-ProcRendererGetInstance     :: #type proc "c" (this: ^Renderer) -> ^Instance
-ProcRendererGetDevice       :: #type proc "c" (this: ^Renderer) -> ^Device
+ProcRendererGetAllocator            :: #type proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks
+ProcRendererGetInstance             :: #type proc "c" (this: ^Renderer) -> ^Instance
+ProcRendererGetDevice               :: #type proc "c" (this: ^Renderer) -> ^Device
+
+ProcRendererCreateBuffer            :: #type proc "c" (this: ^Renderer, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32
+ProcRendererCreateImage             :: #type proc "c" (this: ^Renderer, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32
 
 RendererVTable :: struct {
     /* pre-init */
@@ -333,4 +380,7 @@ RendererVTable :: struct {
     getAllocator:               ProcRendererGetAllocator,
     getInstance:                ProcRendererGetInstance,
     getDevice:                  ProcRendererGetDevice,
+
+    createBuffer:               ProcRendererCreateBuffer,
+    createImage:                ProcRendererCreateImage,
 }

@@ -1387,8 +1387,19 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
         }
     }
 
+    
     if vma.create_allocator({
-
+        flags                           = ((memoryPriorityFeatures.pNext != nil || deviceCI.pNext == &memoryPriorityFeatures) ? { .Ext_Memory_Priority } : {}),
+        physical_device                 = this._device.physical,
+        device                          = this._device.logical,
+        preferred_large_heap_block_size = 0,    /* default to 256 MiB */
+        allocation_callbacks            = this._allocator,
+        vulkan_functions                = &{
+            get_instance_proc_addr          = this._globalFunctions.getInstanceProcAddr,
+            get_device_proc_addr            = this._instance.getDeviceProcAddr,
+        },
+        instance                        = this._instance.instance,
+        vulkan_api_version              = appInfo.apiVersion,
     }, &this._vma) != .SUCCESS {
         _log(this, .Fatal, "Failed to create VMA allocator")
         return false
@@ -2152,6 +2163,98 @@ Renderer_getDevice :: proc "c" (this: ^Renderer) -> ^Device {
     return &this._device
 }
 
+Renderer_createBuffer :: proc "c" (this: ^Renderer, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    if this._vma == nil {
+        _log(this, .Error, "Can't create buffer: renderer is not fully initialized")
+        return false
+    }
+
+    if buffer == nil {
+        _log(this, .Error, "Provided buffer pointer is invalid")
+        return false
+    }
+
+    if createInfo == nil {
+        _log(this, .Error, "Provided create info pointer is invalid")
+        return false
+    }
+
+    if allocationInfo == nil {
+        _log(this, .Error, "Provided allocation info pointer is invalid")
+        return false
+    }
+
+    vkBuffer: vk.Buffer
+    allocation: vma.Allocation
+    if vma.create_buffer(this._vma, createInfo^, allocationInfo^, &vkBuffer, &allocation, nil) != .SUCCESS {
+        _log(this, .Error, "Failed to create and allocate buffer")
+        return false
+    }
+
+    buffer^ = {
+        destroy             = ProcIResourceDestroy(Buffer_destroy),
+        getAllocationInfo   = IResource_getAllocationInfo,
+        getVulkanBuffer     = Buffer_getVulkanBuffer,
+
+        _allocation         = allocation,
+        _buffer             = vkBuffer,
+    }
+
+    return true
+}
+
+Renderer_createImage :: proc "c" (this: ^Renderer, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    if this._vma == nil {
+        _log(this, .Error, "Can't create image: renderer is not fully initialized")
+        return false
+    }
+
+    if image == nil {
+        _log(this, .Error, "Provided image pointer is invalid")
+        return false
+    }
+
+    if createInfo == nil {
+        _log(this, .Error, "Provided create info pointer is invalid")
+        return false
+    }
+
+    if allocationInfo == nil {
+        _log(this, .Error, "Provided allocation info pointer is invalid")
+        return false
+    }
+
+    vkImage: vk.Image
+    allocation: vma.Allocation
+    if vma.create_image(this._vma, createInfo^, allocationInfo^, &vkImage, &allocation, nil) != .SUCCESS {
+        _log(this, .Error, "Failed to create and allocate buffer")
+        return false
+    }
+
+    image^ = {
+        destroy             = ProcIResourceDestroy(Image_destroy),
+        getAllocationInfo   = IResource_getAllocationInfo,
+        getVulkanImage      = Image_getVulkanImage,
+
+        _allocation         = allocation,
+        _image              = vkImage,
+    }
+
+    return true
+}
+
 /* FencePool implementation */
 FencePool_destroy :: proc "c" (this: ^FencePool) {
     if this == nil || this._renderer == nil {
@@ -2484,6 +2587,7 @@ CommandPool_release :: proc "c" (this: ^CommandPool, commandBuffer: vk.CommandBu
     _log(this._renderer, .Warning, "Can't release command buffer: provided command buffer not found in this pool")
 }
 
+/* BackbufferPool implementation */
 BackbufferPool_acquire :: proc "c" (this: ^BackbufferPool, mode: BackbufferPoolAcquisitionMode) -> ^Backbuffer {
     if this == nil || this._renderer == nil {
         return nil
@@ -2557,4 +2661,67 @@ BackbufferPool_release :: proc "c" (this: ^BackbufferPool, backbuffer: ^Backbuff
     if backbuffer.semaphore != 0 {
         this._semaphorePool->release(backbuffer.semaphore)
     }
+}
+
+/* IResource implementation */
+IResource_getAllocationInfo :: proc "c" (this: ^IResource, allocationInfo: ^vma.Allocation_Info) -> b32 {
+    if this == nil || this._renderer == nil {
+        return false
+    }
+
+    context = this._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._renderer, .Error, "Failed to get allocation info for resource: allocation is invalid")
+        return false
+    }
+
+    vma.get_allocation_info(this._renderer._vma, this._allocation, allocationInfo)
+    return true
+}
+
+/* Buffer implementation */
+Buffer_destroy :: proc "c" (this: ^Buffer) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+
+    context = this._renderer._ctx
+
+    vma.destroy_buffer(this._renderer._vma, this._buffer, this._allocation)
+    this._buffer = 0
+    this._allocation = nil
+}
+
+Buffer_getVulkanBuffer :: proc "c" (this: ^Buffer) -> vk.Buffer {
+    if this == nil || this._renderer == nil {
+        return 0
+    }
+
+    context = this._renderer._ctx
+
+    return this._buffer
+}
+
+/* Image implementation */
+Image_destroy :: proc "c" (this: ^Image) {
+    if this == nil || this._renderer == nil {
+        return
+    }
+
+    context = this._renderer._ctx
+
+    vma.destroy_image(this._renderer._vma, this._image, this._allocation)
+    this._image = 0
+    this._allocation = nil
+}
+
+Image_getVulkanImage :: proc "c" (this: ^Image) -> vk.Image {
+    if this == nil || this._renderer == nil {
+        return 0
+    }
+
+    context = this._renderer._ctx
+
+    return this._image
 }

@@ -158,7 +158,7 @@ CommandPoolVTable :: struct {
 /* backbuffer pool */
 Backbuffer :: struct {
     index:          u32,
-    image:          vk.Image,
+    image:          Image,
     imageView:      vk.ImageView,
 
     surfaceFormat:  vk.SurfaceFormatKHR,
@@ -202,7 +202,6 @@ BackbufferPoolVTable :: struct {
 BackbufferPacket :: struct {
     backbuffer: ^Backbuffer,
     lastStage:  vk.PipelineStageFlags,
-    lastLayout: vk.ImageLayout,
 }
 
 Packet :: struct {
@@ -265,6 +264,7 @@ IResource :: struct {
     _allocation:    vma.Allocation,
 
     _isPersistent:  b32,
+    _isBackbuffer:  b32,
 }
 
 ProcIResourceDestroy            :: #type proc "c" (this: ^IResource)
@@ -314,6 +314,20 @@ ImageVTable :: struct {
     getVulkanImage: ProcImageGetVulkanImage,
     getLayout:      ProcImageGetLayout,
     setLayout:      ProcImageSetLayout,
+}
+
+/* shaders */
+Shader :: struct {
+    using _:    ShaderVTable,
+}
+
+ProcShaderDestroy               :: #type proc "c" (this: ^Shader)
+ProcShaderGetVulkanShaderModule :: #type proc "c" (this: ^Shader) -> vk.ShaderModule
+ProcShaderGetEntryPoint         :: #type proc "c" (this: ^Shader) -> cstring
+ProcShaderGetStages             :: #type proc "c" (this: ^Shader) -> vk.ShaderStageFlags
+
+ShaderVTable :: struct {
+
 }
 
 /* internal use only */

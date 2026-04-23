@@ -193,7 +193,7 @@ HelloWorldPass :: struct {
     _indexDataSize:     vk.DeviceSize,
     _uploadBuffer:      krfw_vk.Buffer,
     _privateBuffer:     krfw_vk.Buffer,
-    
+
     _vertexShader:      vk.ShaderModule,
     _fragmentShader:    vk.ShaderModule,
 
@@ -484,11 +484,11 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                     sType = .IMAGE_MEMORY_BARRIER,
                     srcAccessMask = {},
                     dstAccessMask = { .COLOR_ATTACHMENT_WRITE },
-                    oldLayout = packet.backbufferPacket.lastLayout,
+                    oldLayout = packet.backbufferPacket.backbuffer.image->getLayout(),
                     newLayout = .COLOR_ATTACHMENT_OPTIMAL,
                     srcQueueFamilyIndex = packet.queue.family,
                     dstQueueFamilyIndex = packet.queue.family,
-                    image = packet.backbufferPacket.backbuffer.image,
+                    image = packet.backbufferPacket.backbuffer.image->getVulkanImage(),
                     subresourceRange = {
                         aspectMask = { .COLOR },
                         baseMipLevel = 0,
@@ -500,7 +500,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             )
 
             packet.backbufferPacket.lastStage = { .COLOR_ATTACHMENT_OUTPUT }
-            packet.backbufferPacket.lastLayout = .COLOR_ATTACHMENT_OPTIMAL
+            packet.backbufferPacket.backbuffer.image->setLayout(.COLOR_ATTACHMENT_OPTIMAL)
 
             device.khr.dynamicRendering.cmdBeginRendering(packet.commandBuffer, &{
                 sType = .RENDERING_INFO_KHR,
@@ -516,7 +516,7 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                 pColorAttachments = &vk.RenderingAttachmentInfoKHR {
                     sType = .RENDERING_ATTACHMENT_INFO_KHR,
                     imageView = packet.backbufferPacket.backbuffer.imageView,
-                    imageLayout = packet.backbufferPacket.lastLayout,
+                    imageLayout = packet.backbufferPacket.backbuffer.image->getLayout(),
                     loadOp = .CLEAR,
                     storeOp = .STORE,
                     clearValue = {

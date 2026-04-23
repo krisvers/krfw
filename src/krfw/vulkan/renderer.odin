@@ -1662,7 +1662,27 @@ _Renderer_finishCreateWSI :: proc(this: ^Renderer, window: ^krfw.Window) -> b32 
         
         backbufferPool._backbuffers[i] = {
             index = i,
-            image = backbufferImages[i],
+            image = {
+                destroy             = ProcIResourceDestroy(Image_destroy),
+                getAllocationInfo   = IResource_getAllocationInfo,
+                mapResource         = IResource_mapResource,
+                unmapResource       = IResource_unmapResource,
+                flush               = IResource_flush,
+                invalidate          = IResource_invalidate,
+
+                getVulkanImage      = Image_getVulkanImage,
+                getLayout           = Image_getLayout,
+                setLayout           = Image_setLayout,
+
+                _pool               = &this._defaultResourcePool,
+                _allocation         = nil,
+
+                _isPersistent       = false,
+                _isBackbuffer       = true,
+
+                _image              = backbufferImages[i],
+                _layout             = .UNDEFINED
+            },
             imageView = view,
 
             surfaceFormat = surfaceFormats[preferredSurfaceFormat],
@@ -1808,7 +1828,6 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
 
     backbufferPacket := BackbufferPacket {
         backbuffer = nil,
-        lastLayout = .UNDEFINED,
         lastStage = { .TRANSFER },
     }
 
@@ -1874,11 +1893,11 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
             sType = .IMAGE_MEMORY_BARRIER,
             srcAccessMask = {},
             dstAccessMask = { .TRANSFER_READ },
-            oldLayout = backbufferPacket.lastLayout,
+            oldLayout = backbufferPacket.backbuffer.image->getLayout(),
             newLayout = .PRESENT_SRC_KHR,
             srcQueueFamilyIndex = this._generalQueue.family,
             dstQueueFamilyIndex = this._generalQueue.family,
-            image = backbufferPacket.backbuffer.image,
+            image = backbufferPacket.backbuffer.image->getVulkanImage(),
             subresourceRange = {
                 aspectMask =  {.COLOR },
                 baseMipLevel = 0,
@@ -1895,6 +1914,8 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
             0, nil,
             1, &backbufferToPresentBarrier
         )
+
+        backbufferPacket.backbuffer.image->setLayout(.PRESENT_SRC_KHR)
     }
 
     if this._device.endCommandBuffer(commandBuffer) != .SUCCESS {
@@ -2786,6 +2807,11 @@ IResource_mapResource :: proc "c" (this: ^IResource) -> rawptr {
 
     context = this._pool._renderer._ctx
 
+    if this._isBackbuffer {
+        _log(this._pool._renderer, .Error, "Can't map resource: resource is a backbuffer")
+        return nil
+    }
+
     if this._allocation == nil {
         _log(this._pool._renderer, .Error, "Can't map resource: resource is invalid")
         return nil
@@ -2814,6 +2840,11 @@ IResource_unmapResource :: proc "c" (this: ^IResource) {
 
     context = this._pool._renderer._ctx
 
+    if this._isBackbuffer {
+        _log(this._pool._renderer, .Error, "Can't unmap resource: resource is a backbuffer")
+        return
+    }
+
     if this._allocation == nil {
         _log(this._pool._renderer, .Error, "Can't unmap resource: resource is invalid")
         return
@@ -2834,6 +2865,11 @@ IResource_flush :: proc "c" (this: ^IResource, offset: vk.DeviceSize, size: vk.D
 
     context = this._pool._renderer._ctx
 
+    if this._isBackbuffer {
+        _log(this._pool._renderer, .Error, "Can't flush resource: resource is a backbuffer")
+        return false
+    }
+
     if this._allocation == nil {
         _log(this._pool._renderer, .Error, "Can't flush resource: resource is invalid")
         return false
@@ -2853,6 +2889,11 @@ IResource_invalidate :: proc "c" (this: ^IResource, offset: vk.DeviceSize, size:
     }
 
     context = this._pool._renderer._ctx
+
+    if this._isBackbuffer {
+        _log(this._pool._renderer, .Error, "Can't invalidate resource: resource is a backbuffer")
+        return false
+    }
 
     if this._allocation == nil {
         _log(this._pool._renderer, .Error, "Can't invalidate resource: resource is invalid")
@@ -2908,6 +2949,11 @@ Image_destroy :: proc "c" (this: ^Image) {
 
     context = this._pool._renderer._ctx
 
+    if this._isBackbuffer {
+        _log(this._pool._renderer, .Error, "Can't destroy image: is internally managed backbuffer")
+        return
+    }
+
     if this._allocation == nil {
         _log(this._pool._renderer, .Error, "Can't destroy image: resource is invalid (likely a double-free)")
         return
@@ -2925,7 +2971,7 @@ Image_getVulkanImage :: proc "c" (this: ^Image) -> vk.Image {
 
     context = this._pool._renderer._ctx
 
-    if this._allocation == nil {
+    if !this._isBackbuffer && this._allocation == nil {
         _log(this._pool._renderer, .Error, "Can't get Vulkan image: resource is invalid")
         return 0
     }
@@ -2940,7 +2986,7 @@ Image_getLayout :: proc "c" (this: ^Image) -> vk.ImageLayout {
 
     context = this._pool._renderer._ctx
 
-    if this._allocation == nil {
+    if !this._isBackbuffer && this._allocation == nil {
         _log(this._pool._renderer, .Error, "Can't get image layout: resource is invalid")
         return .UNDEFINED
     }
@@ -2955,7 +3001,7 @@ Image_setLayout :: proc "c" (this: ^Image, layout: vk.ImageLayout) {
 
     context = this._pool._renderer._ctx
 
-    if this._allocation == nil {
+    if !this._isBackbuffer && this._allocation == nil {
         _log(this._pool._renderer, .Error, "Can't set image layout: resource is invalid")
         return
     }

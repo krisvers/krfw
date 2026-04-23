@@ -248,8 +248,8 @@ ResourcePool :: struct {
 }
 
 ProcResourcePoolDestroy         :: #type proc "c" (this: ^ResourcePool)
-ProcResourcePoolCreateBuffer    :: #type proc "c" (this: ^ResourcePool, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32
-ProcResourcePoolCreateImage     :: #type proc "c" (this: ^ResourcePool, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32
+ProcResourcePoolCreateBuffer    :: #type proc "c" (this: ^ResourcePool, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> b32
+ProcResourcePoolCreateImage     :: #type proc "c" (this: ^ResourcePool, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> b32
 
 ResourcePoolVTable :: struct {
     destroy:        ProcResourcePoolDestroy,
@@ -263,18 +263,24 @@ IResource :: struct {
 
     _pool:          ^ResourcePool,
     _allocation:    vma.Allocation,
+
+    _isPersistent:  b32,
 }
 
 ProcIResourceDestroy            :: #type proc "c" (this: ^IResource)
 ProcIResourceGetAllocationInfo  :: #type proc "c" (this: ^IResource, allocationInfo: ^vma.Allocation_Info) -> b32
-ProcIResourceMap                :: #type proc "c" (this: ^IResource) -> rawptr
-ProcIResourceUnmap              :: #type proc "c" (this: ^IResource)
-ProcIResourceFlush              :: #type proc "c" (this: ^IResource) -> b32
-ProcIResourceInvalidate         :: #type proc "c" (this: ^IResource) -> b32
+ProcIResourceMapResource        :: #type proc "c" (this: ^IResource) -> rawptr
+ProcIResourceUnmapResource      :: #type proc "c" (this: ^IResource)
+ProcIResourceFlush              :: #type proc "c" (this: ^IResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32
+ProcIResourceInvalidate         :: #type proc "c" (this: ^IResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32
 
 IResourceVTable :: struct {
     destroy:            ProcIResourceDestroy,
     getAllocationInfo:  ProcIResourceGetAllocationInfo,
+    mapResource:        ProcIResourceMapResource,
+    unmapResource:      ProcIResourceUnmapResource,
+    flush:              ProcIResourceFlush,
+    invalidate:         ProcIResourceInvalidate,
 }
 
 /* buffer */
@@ -359,6 +365,7 @@ Renderer :: struct {
     /* pools */
     _defaultFencePool:      FencePool,
     _defaultSemaphorePool:  SemaphorePool,
+    _defaultResourcePool:   ResourcePool,
 
     /* other state */
     _performingDestruction: b32,

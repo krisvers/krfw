@@ -189,11 +189,11 @@ HelloWorldPass :: struct {
 
     _ctx:               runtime.Context,
     _renderer:          ^krfw_vk.Renderer,
-    _uploadBuffer:      vk.Buffer,
-    _uploadMemory:      vk.DeviceMemory,
-    _uploadMapped:      ^u8,
-    _privateBuffer:     vk.Buffer,
-    _privateMemory:     vk.DeviceMemory,
+    _vertexDataSize:    vk.DeviceSize,
+    _indexDataSize:     vk.DeviceSize,
+    _uploadBuffer:      krfw_vk.Buffer,
+    _privateBuffer:     krfw_vk.Buffer,
+    
     _vertexShader:      vk.ShaderModule,
     _fragmentShader:    vk.ShaderModule,
 
@@ -224,75 +224,42 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                  0.0,  0.5,
             }
 
+            this._vertexDataSize = vk.DeviceSize(size_of(vertexData[0]) * len(vertexData))
+
             indexData := []u32 {
                 0, 1, 2,
             }
-
-            if device.createBuffer(device.logical, &{
-                sType = .BUFFER_CREATE_INFO,
-                size = size_of(f32) * 6 + size_of(u32) * 3,
-                usage = { .TRANSFER_SRC },
-                sharingMode = .EXCLUSIVE,
-            }, allocator, &this._uploadBuffer) != .SUCCESS {
-                return false
-            }
-
-            if device.createBuffer(device.logical, &{
-                sType = .BUFFER_CREATE_INFO,
-                size = size_of(f32) * 6 + size_of(u32) * 3,
-                usage = { .TRANSFER_DST, .VERTEX_BUFFER, .INDEX_BUFFER },
-                sharingMode = .EXCLUSIVE,
-            }, allocator, &this._privateBuffer) != .SUCCESS {
-                return false
-            }
-
-            uploadBufferMemoryRequirements, privateBufferMemoryRequirements: vk.MemoryRequirements
-            device.getBufferMemoryRequirements(device.logical, this._uploadBuffer, &uploadBufferMemoryRequirements)
-            device.getBufferMemoryRequirements(device.logical, this._privateBuffer, &privateBufferMemoryRequirements)
-
-            findMemoryType := proc "c" (props: ^vk.PhysicalDeviceMemoryProperties, flags: vk.MemoryPropertyFlags, typeBits: u32) -> u32 {
-                for i in 0..<props.memoryTypeCount {
-                    if (typeBits & (1 << i)) != 0 && (props.memoryTypes[i].propertyFlags & flags) == flags {
-                        return u32(i)
-                    }
-                }
-
-                return max(u32)
-            }
-
-            physicalDeviceMemoryProperties: vk.PhysicalDeviceMemoryProperties
-            instance.getPhysicalDeviceMemoryProperties(device.physical, &physicalDeviceMemoryProperties)
-
-            if device.allocateMemory(device.logical, &{
-                sType = .MEMORY_ALLOCATE_INFO,
-                allocationSize = uploadBufferMemoryRequirements.size,
-                memoryTypeIndex = findMemoryType(&physicalDeviceMemoryProperties, { .HOST_VISIBLE, .HOST_COHERENT }, uploadBufferMemoryRequirements.memoryTypeBits)
-            }, allocator, &this._uploadMemory) != .SUCCESS {
-                return false
-            }
-
-            if device.allocateMemory(device.logical, &{
-                sType = .MEMORY_ALLOCATE_INFO,
-                allocationSize = privateBufferMemoryRequirements.size,
-                memoryTypeIndex = findMemoryType(&physicalDeviceMemoryProperties, { .DEVICE_LOCAL }, privateBufferMemoryRequirements.memoryTypeBits)
-            }, allocator, &this._privateMemory) != .SUCCESS {
-                return false
-            }
-
-            if device.mapMemory(device.logical, this._uploadMemory, 0, uploadBufferMemoryRequirements.size, {}, (^rawptr)(&this._uploadMapped)) != .SUCCESS {
-                return false
-            }
-
-            mem.copy_non_overlapping(this._uploadMapped, &vertexData[0], 6 * size_of(f32))
-            mem.copy_non_overlapping(mem.ptr_offset(this._uploadMapped, 6 * size_of(f32)), &indexData[0], 3 * size_of(u32))
-
-            if device.bindBufferMemory(device.logical, this._uploadBuffer, this._uploadMemory, 0) != .SUCCESS {
-                return false
-            }
             
-            if device.bindBufferMemory(device.logical, this._privateBuffer, this._privateMemory, 0) != .SUCCESS {
+            this._indexDataSize = vk.DeviceSize(size_of(indexData[0]) * len(indexData))
+
+            if !this._renderer->getDefaultResourcePool()->createBuffer(&this._uploadBuffer, &{
+                sType       = .BUFFER_CREATE_INFO,
+                size        = this._vertexDataSize + this._indexDataSize,
+                usage       = { .TRANSFER_SRC },
+                sharingMode = .EXCLUSIVE,
+            }, &{
+                flags = { .Mapped },
+                usage = .Cpu_To_Gpu,
+            }) {
                 return false
             }
+
+            if !this._renderer->getDefaultResourcePool()->createBuffer(&this._privateBuffer, &{
+                sType       = .BUFFER_CREATE_INFO,
+                size        = this._vertexDataSize + this._indexDataSize,
+                usage       = { .VERTEX_BUFFER, .INDEX_BUFFER, .TRANSFER_DST },
+                sharingMode = .EXCLUSIVE,
+            }, &{
+                usage = .Gpu_Only,
+            }) {
+                return false
+            }
+
+            uploadMapped := (^u8)(this._uploadBuffer->mapResource())
+            assert(uploadMapped != nil)
+
+            mem.copy_non_overlapping(uploadMapped, &vertexData[0], int(this._vertexDataSize))
+            mem.copy_non_overlapping(mem.ptr_offset(uploadMapped, this._vertexDataSize), &indexData[0], int(this._indexDataSize))
 
             transferCommandPool := this._renderer->getDefaultCommandPool(.Transfer)
             transferCommandBuffer := transferCommandPool->acquire()
@@ -302,10 +269,10 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
                 sType = .COMMAND_BUFFER_BEGIN_INFO,
             }) == .SUCCESS)
 
-            device.cmdCopyBuffer(transferCommandBuffer, this._uploadBuffer, this._privateBuffer, 1, &vk.BufferCopy {
+            device.cmdCopyBuffer(transferCommandBuffer, this._uploadBuffer->getVulkanBuffer(), this._privateBuffer->getVulkanBuffer(), 1, &vk.BufferCopy {
                 srcOffset = 0,
                 dstOffset = 0,
-                size = size_of(f32) * 6 + size_of(u32) * 3,
+                size = this._vertexDataSize + this._indexDataSize,
             })
 
             assert(device.endCommandBuffer(transferCommandBuffer) == .SUCCESS)
@@ -402,12 +369,8 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             device.destroyShaderModule(device.logical, this._fragmentShader, allocator)
             device.destroyShaderModule(device.logical, this._vertexShader, allocator)
             
-            device.destroyBuffer(device.logical, this._privateBuffer, allocator)
-            device.freeMemory(device.logical, this._privateMemory, allocator)
-
-            device.unmapMemory(device.logical, this._uploadMemory)
-            device.destroyBuffer(device.logical, this._uploadBuffer, allocator)
-            device.freeMemory(device.logical, this._uploadMemory, allocator)
+            this._privateBuffer->destroy()
+            this._uploadBuffer->destroy()
         }),
 
         requiresBackbuffer = krfw.ProcIPassRequiresBackbuffer(proc "c" (this: ^HelloWorldPass) -> b32 {
@@ -586,8 +549,9 @@ instantiateHelloWorldPass :: proc(pass: ^HelloWorldPass, renderer: ^krfw_vk.Rend
             })
 
             offset := vk.DeviceSize(0)
-            device.cmdBindVertexBuffers(packet.commandBuffer, 0, 1, &this._privateBuffer, &offset)
-            device.cmdBindIndexBuffer(packet.commandBuffer, this._privateBuffer, size_of(f32) * 6, .UINT32)
+            vertexBuffers := [?]vk.Buffer { this._privateBuffer->getVulkanBuffer() }
+            device.cmdBindVertexBuffers(packet.commandBuffer, 0, u32(len(vertexBuffers)), &vertexBuffers[0], &offset)
+            device.cmdBindIndexBuffer(packet.commandBuffer, this._privateBuffer->getVulkanBuffer(), this._vertexDataSize, .UINT32)
             device.cmdDrawIndexed(packet.commandBuffer, 3, 1, 0, 0, 0)
 
             device.khr.dynamicRendering.cmdEndRendering(packet.commandBuffer)

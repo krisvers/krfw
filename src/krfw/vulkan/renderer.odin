@@ -104,10 +104,12 @@ RENDERER := Renderer {
     createFencePool         = Renderer_createFencePool,
     createSemaphorePool     = Renderer_createSemaphorePool,
     createCommandPool       = Renderer_createCommandPool,
+    createResourcePool      = Renderer_createResourcePool,
 
     getDefaultFencePool     = Renderer_getDefaultFencePool,
     getDefaultSemaphorePool = Renderer_getDefaultSemaphorePool,
     getDefaultCommandPool   = Renderer_getDefaultCommandPool,
+    getDefaultResourcePool  = Renderer_getDefaultResourcePool,
 
     getAllocator            = Renderer_getAllocator,
     getInstance             = Renderer_getInstance,
@@ -1358,25 +1360,28 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
             this._computeQueue = &queue
         }
 
-        queue.commandPool._isInternal = true
         if !this->createCommandPool(&queue.commandPool, &this._defaultFencePool, &queue) {
             _log(this, .Fatal, "Failed to create internal command pool")
             return false
         }
+
+        queue.commandPool._isInternal = true
     }
 
     /* setup pools */
-    this._defaultFencePool._isInternal = true
     if !this->createFencePool(&this._defaultFencePool) {
         _log(this, .Fatal, "Failed to create internal default fence pool")
         return false
     }
 
-    this._defaultSemaphorePool._isInternal = true
+    this._defaultFencePool._isInternal = true
+
     if !this->createSemaphorePool(&this._defaultSemaphorePool) {
         _log(this, .Fatal, "Failed to create internal default semaphore pool")
         return false
     }
+    
+    this._defaultSemaphorePool._isInternal = true
 
     /* finish initializing any queued windows */
     for w in this._backbufferPools {
@@ -1403,6 +1408,17 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
     }, &this._vma) != .SUCCESS {
         _log(this, .Fatal, "Failed to create VMA allocator")
         return false
+    }
+
+    this._defaultResourcePool = {
+        destroy         = ResourcePool_destroy,
+        createBuffer    = ResourcePool_createBuffer,
+        createImage     = ResourcePool_createImage,
+
+        _renderer       = this,
+        _pool           = nil,
+
+        _isInternal     = true,
     }
 
     return true
@@ -1840,8 +1856,8 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
             commandBuffer       = commandBuffer,
             backbufferPacket    = backbufferPacket.backbuffer == nil ? nil : &backbufferPacket,
 
-            _submitInfoWaits = &submitInfoWaits,
-            _signalSemaphores = &signalSemaphores,
+            _submitInfoWaits    = &submitInfoWaits,
+            _signalSemaphores   = &signalSemaphores,
         }
 
         if !pass->execute(&packet) {
@@ -2062,6 +2078,46 @@ Renderer_createCommandPool :: proc "c" (this: ^Renderer, commandPool: ^CommandPo
     return true
 }
 
+Renderer_createResourcePool :: proc "c" (this: ^Renderer, resourcePool: ^ResourcePool, createInfo: ^vma.Pool_Create_Info) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't create a resource pool: renderer not fully initialized yet")
+        return false
+    }
+
+    if resourcePool == nil {
+        _log(this, .Error, "Can't create a resource pool: invalid pointer to a ResourcePool")
+        return false
+    }
+
+    if createInfo == nil {
+        _log(this, .Error, "Can't create a resource pool: invalid pointer to a create info")
+        return false
+    }
+
+    pool: vma.Pool
+    if vma.create_pool(this._vma, createInfo^, &pool) != .SUCCESS {
+        _log(this, .Error, "Failed to create resource pool")
+        return false
+    }
+
+    resourcePool^ = {
+        destroy         = ResourcePool_destroy,
+        createBuffer    = ResourcePool_createBuffer,
+        createImage     = ResourcePool_createImage,
+
+        _renderer       = this,
+        _pool           = pool,
+    }
+    
+    return true
+}
+
 Renderer_getDefaultFencePool :: proc "c" (this: ^Renderer) -> ^FencePool {
     if this == nil {
         return nil
@@ -2121,6 +2177,21 @@ Renderer_getDefaultCommandPool :: proc "c" (this: ^Renderer, queueType: QueueTyp
 
     _log(this, .Error, "Can't get default command pool: invalid queue type provided")
     return nil
+}
+
+Renderer_getDefaultResourcePool :: proc "c" (this: ^Renderer) -> ^ResourcePool {
+    if this == nil {
+        return nil
+    }
+
+    context = this._ctx
+
+    if this._device.logical == nil {
+        _log(this, .Error, "Can't get default resource pool: renderer not fully initialized yet")
+        return nil
+    }
+
+    return &this._defaultResourcePool
 }
 
 Renderer_getAllocator :: proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks {
@@ -2592,7 +2663,7 @@ ResourcePool_destroy :: proc "c" (this: ^ResourcePool) {
     this._pool = nil
 }
 
-ResourcePool_createBuffer :: proc "c" (this: ^ResourcePool, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32 {
+ResourcePool_createBuffer :: proc "c" (this: ^ResourcePool, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> b32 {
     if this == nil || this._renderer == nil {
         return false
     }
@@ -2600,21 +2671,21 @@ ResourcePool_createBuffer :: proc "c" (this: ^ResourcePool, buffer: ^Buffer, cre
     context = this._renderer._ctx
 
     if buffer == nil {
-        _log(this._renderer, .Error, "Provided buffer pointer is invalid")
+        _log(this._renderer, .Error, "Can't create buffer: invalid pointer to Buffer")
         return false
     }
 
     if createInfo == nil {
-        _log(this._renderer, .Error, "Provided create info pointer is invalid")
+        _log(this._renderer, .Error, "Can't create buffer: invalid pointer to VkBufferCreateInfo")
         return false
     }
 
-    if allocationInfo == nil {
-        _log(this._renderer, .Error, "Provided allocation info pointer is invalid")
+    if allocationCreateInfo == nil {
+        _log(this._renderer, .Error, "Can't create image: invalid pointer to VmaAllocationCreateInfo")
         return false
     }
 
-    ai := allocationInfo^
+    ai := allocationCreateInfo^
     ai.pool = this._pool
 
     vkBuffer: vk.Buffer
@@ -2627,16 +2698,23 @@ ResourcePool_createBuffer :: proc "c" (this: ^ResourcePool, buffer: ^Buffer, cre
     buffer^ = {
         destroy             = ProcIResourceDestroy(Buffer_destroy),
         getAllocationInfo   = IResource_getAllocationInfo,
+        mapResource         = IResource_mapResource,
+        unmapResource       = IResource_unmapResource,
+        flush               = IResource_flush,
+        invalidate          = IResource_invalidate,
         getVulkanBuffer     = Buffer_getVulkanBuffer,
 
+        _pool               = this,
         _allocation         = allocation,
         _buffer             = vkBuffer,
+
+        _isPersistent       = .Mapped in allocationCreateInfo.flags,
     }
 
     return true
 }
 
-ResourcePool_createImage :: proc "c" (this: ^ResourcePool, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationInfo: ^vma.Allocation_Create_Info) -> b32 {
+ResourcePool_createImage :: proc "c" (this: ^ResourcePool, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> b32 {
     if this == nil || this._renderer == nil {
         return false
     }
@@ -2644,21 +2722,21 @@ ResourcePool_createImage :: proc "c" (this: ^ResourcePool, image: ^Image, create
     context = this._renderer._ctx
 
     if image == nil {
-        _log(this._renderer, .Error, "Provided image pointer is invalid")
+        _log(this._renderer, .Error, "Can't create image: invalid pointer to Image")
         return false
     }
 
     if createInfo == nil {
-        _log(this._renderer, .Error, "Provided create info pointer is invalid")
+        _log(this._renderer, .Error, "Can't create image: invalid pointer to VkImageCreateInfo")
         return false
     }
 
-    if allocationInfo == nil {
-        _log(this._renderer, .Error, "Provided allocation info pointer is invalid")
+    if allocationCreateInfo == nil {
+        _log(this._renderer, .Error, "Can't create image: invalid pointer to VmaAllocationCreateInfo")
         return false
     }
 
-    ai := allocationInfo^
+    ai := allocationCreateInfo^
     ai.pool = this._pool
 
     vkImage: vk.Image
@@ -2673,8 +2751,12 @@ ResourcePool_createImage :: proc "c" (this: ^ResourcePool, image: ^Image, create
         getAllocationInfo   = IResource_getAllocationInfo,
         getVulkanImage      = Image_getVulkanImage,
 
+        _pool               = this,
         _allocation         = allocation,
         _image              = vkImage,
+        _layout             = .UNDEFINED,
+
+        _isPersistent       = .Mapped in allocationCreateInfo.flags,
     }
 
     return true
@@ -2682,63 +2764,201 @@ ResourcePool_createImage :: proc "c" (this: ^ResourcePool, image: ^Image, create
 
 /* IResource implementation */
 IResource_getAllocationInfo :: proc "c" (this: ^IResource, allocationInfo: ^vma.Allocation_Info) -> b32 {
-    if this == nil || this._renderer == nil {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
         return false
     }
 
-    context = this._renderer._ctx
+    context = this._pool._renderer._ctx
 
     if this._allocation == nil {
-        _log(this._renderer, .Error, "Failed to get allocation info for resource: allocation is invalid")
+        _log(this._pool._renderer, .Error, "Failed to get allocation info for resource: resource is invalid")
         return false
     }
 
-    vma.get_allocation_info(this._renderer._vma, this._allocation, allocationInfo)
+    vma.get_allocation_info(this._pool._renderer._vma, this._allocation, allocationInfo)
+    return true
+}
+
+IResource_mapResource :: proc "c" (this: ^IResource) -> rawptr {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
+        return nil
+    }
+
+    context = this._pool._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't map resource: resource is invalid")
+        return nil
+    }
+
+    if this._isPersistent {
+        allocationInfo: vma.Allocation_Info
+        vma.get_allocation_info(this._pool._renderer._vma, this._allocation, &allocationInfo)
+
+        return allocationInfo.mapped_data
+    }
+
+    mapped: rawptr
+    if vma.map_memory(this._pool._renderer._vma, this._allocation, &mapped) != .SUCCESS {
+        _log(this._pool._renderer, .Error, "Failed to map memory for resource")
+        return nil
+    }
+
+    return mapped
+}
+
+IResource_unmapResource :: proc "c" (this: ^IResource) {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
+        return
+    }
+
+    context = this._pool._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't unmap resource: resource is invalid")
+        return
+    }
+
+    if this._isPersistent {
+        return
+    }
+
+    vma.unmap_memory(this._pool._renderer._vma, this._allocation)
+    this._allocation = nil
+}
+
+IResource_flush :: proc "c" (this: ^IResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32 {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
+        return false
+    }
+
+    context = this._pool._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't flush resource: resource is invalid")
+        return false
+    }
+
+    if vma.flush_allocation(this._pool._renderer._vma, this._allocation, offset, size) != .SUCCESS {
+        _log(this._pool._renderer, .Error, "Failed to flush resource")
+        return false
+    }
+
+    return true
+}
+
+IResource_invalidate :: proc "c" (this: ^IResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32 {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
+        return false
+    }
+
+    context = this._pool._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't invalidate resource: resource is invalid")
+        return false
+    }
+
+    if vma.invalidate_allocation(this._pool._renderer._vma, this._allocation, offset, size) != .SUCCESS {
+        _log(this._pool._renderer, .Error, "Failed to invalidate resource")
+        return false
+    }
+
     return true
 }
 
 /* Buffer implementation */
 Buffer_destroy :: proc "c" (this: ^Buffer) {
-    if this == nil || this._renderer == nil {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
         return
     }
 
-    context = this._renderer._ctx
+    context = this._pool._renderer._ctx
 
-    vma.destroy_buffer(this._renderer._vma, this._buffer, this._allocation)
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't destroy buffer: resource is invalid (likely a double-free)")
+        return
+    }
+
+    vma.destroy_buffer(this._pool._renderer._vma, this._buffer, this._allocation)
     this._buffer = 0
     this._allocation = nil
 }
 
 Buffer_getVulkanBuffer :: proc "c" (this: ^Buffer) -> vk.Buffer {
-    if this == nil || this._renderer == nil {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
         return 0
     }
 
-    context = this._renderer._ctx
+    context = this._pool._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't get Vulkan buffer: resource is invalid")
+        return 0
+    }
 
     return this._buffer
 }
 
 /* Image implementation */
 Image_destroy :: proc "c" (this: ^Image) {
-    if this == nil || this._renderer == nil {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
         return
     }
 
-    context = this._renderer._ctx
+    context = this._pool._renderer._ctx
 
-    vma.destroy_image(this._renderer._vma, this._image, this._allocation)
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't destroy image: resource is invalid (likely a double-free)")
+        return
+    }
+
+    vma.destroy_image(this._pool._renderer._vma, this._image, this._allocation)
     this._image = 0
     this._allocation = nil
 }
 
 Image_getVulkanImage :: proc "c" (this: ^Image) -> vk.Image {
-    if this == nil || this._renderer == nil {
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
         return 0
     }
 
-    context = this._renderer._ctx
+    context = this._pool._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't get Vulkan image: resource is invalid")
+        return 0
+    }
 
     return this._image
+}
+
+Image_getLayout :: proc "c" (this: ^Image) -> vk.ImageLayout {    
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
+        return .UNDEFINED
+    }
+
+    context = this._pool._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't get image layout: resource is invalid")
+        return .UNDEFINED
+    }
+
+    return this._layout
+}
+
+Image_setLayout :: proc "c" (this: ^Image, layout: vk.ImageLayout) {    
+    if this == nil || this._pool == nil || this._pool._renderer == nil {
+        return
+    }
+
+    context = this._pool._renderer._ctx
+
+    if this._allocation == nil {
+        _log(this._pool._renderer, .Error, "Can't set image layout: resource is invalid")
+        return
+    }
+
+    this._layout = layout
 }

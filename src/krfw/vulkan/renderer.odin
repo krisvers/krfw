@@ -130,61 +130,31 @@ VkRendererData :: struct {
     _performingDestruction: b32,
 }
 
+VkRendererIBase :: struct {
+    interface:  IBase,
+    base:       ^VkRenderer,
+}
+
+VkRendererIRenderer :: struct {
+    interface:  IRenderer,
+    base:       ^VkRenderer,
+}
+
 VkRendererIVkRenderer :: struct {
-    interface:      IVkRenderer,
-    base:           ^VkRenderer,
+    interface:  IVkRenderer,
+    base:       ^VkRenderer,
 }
 
 VkRenderer :: struct {
-    using _:            VkRendererData,
-    using ivkrenderer:  VkRendererIVkRenderer,
+    data:           VkRendererData,
+
+    ibase:          VkRendererIBase,
+    irenderer:      VkRendererIRenderer,
+    ivkrenderer:    VkRendererIVkRenderer,
 }
 
-RENDERER := VkRenderer {
-    _ctx        = runtime.default_context(),
-    _library    = VULKAN_LOADER_DEFAULT_HANDLE,
-    _allocator  = nil,
-
-    ivkrenderer = {
-        interface = {
-            /* IBase */
-            retain                  = kom.ProcIBaseRetain(VkRenderer_IBase_retain),
-            release                 = kom.ProcIBaseRelease(VkRenderer_IBase_release),
-            queryInterface          = kom.ProcIBaseQueryInterface(VkRenderer_IBase_queryInterface),
-
-            /* IRenderer */
-            setDebugLogger          = krfw.ProcIRendererSetDebugLogger(VkRenderer_IRenderer_setDebugLogger),
-            init                    = krfw.ProcIRendererInit(VkRenderer_IRenderer_init),
-            createWSI               = krfw.ProcIRendererCreateWSI(VkRenderer_IRenderer_createWSI),
-            destroyWSI              = krfw.ProcIRendererDestroyWSI(VkRenderer_IRenderer_destroyWSI),
-            executePasses           = krfw.ProcIRendererExecutePasses(VkRenderer_IRenderer_executePasses),
-
-            /* IVkRenderer */
-            loadVulkanLoaderOdin    = ProcIVkRendererLoadVulkanLoaderOdin(VkRenderer_IVkRenderer_loadVulkanLoaderOdin),
-            loadVulkanLoader        = ProcIVkRendererLoadVulkanLoader(VkRenderer_IVkRenderer_loadVulkanLoader),
-            loadVulkanLoaderUnicode = ProcIVkRendererLoadVulkanLoaderUnicode(VkRenderer_IVkRenderer_loadVulkanLoaderUnicode),
-            setDriverPreferenceOdin = ProcIVkRendererSetDriverPreferenceOdin(VkRenderer_IVkRenderer_setDriverPreferenceOdin),
-            setDriverPreference     = ProcIVkRendererSetDriverPreference(VkRenderer_IVkRenderer_setDriverPreference),
-            setAllocator            = ProcIVkRendererSetAllocator(VkRenderer_IVkRenderer_setAllocator),
-            createFencePool         = ProcIVkRendererCreateFencePool(VkRenderer_IVkRenderer_createFencePool),
-            createSemaphorePool     = ProcIVkRendererCreateSemaphorePool(VkRenderer_IVkRenderer_createSemaphorePool),
-            createCommandPool       = ProcIVkRendererCreateCommandPool(VkRenderer_IVkRenderer_createCommandPool),
-            createResourcePool      = ProcIVkRendererCreateResourcePool(VkRenderer_IVkRenderer_createResourcePool),
-            getDefaultFencePool     = ProcIVkRendererGetDefaultFencePool(VkRenderer_IVkRenderer_getDefaultFencePool),
-            getDefaultSemaphorePool = ProcIVkRendererGetDefaultSemaphorePool(VkRenderer_IVkRenderer_getDefaultSemaphorePool),
-            getDefaultCommandPool   = ProcIVkRendererGetDefaultCommandPool(VkRenderer_IVkRenderer_getDefaultCommandPool),
-            getDefaultResourcePool  = ProcIVkRendererGetDefaultResourcePool(VkRenderer_IVkRenderer_getDefaultResourcePool),
-            getAllocator            = ProcIVkRendererGetAllocator(VkRenderer_IVkRenderer_getAllocator),
-            getInstance             = ProcIVkRendererGetInstance(VkRenderer_IVkRenderer_getInstance),
-            getDevice               = ProcIVkRendererGetDevice(VkRenderer_IVkRenderer_getDevice),
-        },
-
-        base = nil,
-    }
-}
-
-/* pre-init */
-Renderer_setDebugLogger :: proc "c" (this: ^Renderer, logger: krfw.ProcDebugLogger, lowestSeverity := krfw.DebugSeverity.Warning) {
+/* IRenderer */
+VkRenderer_setDebugLogger :: proc "c" (this: ^VkRenderer, logger: krfw.ProcDebugLogger, lowestSeverity := krfw.DebugSeverity.Warning) {
     if this == nil {
         return
     }
@@ -195,93 +165,7 @@ Renderer_setDebugLogger :: proc "c" (this: ^Renderer, logger: krfw.ProcDebugLogg
     this._debugLoggerLowestSeverity = lowestSeverity
 }
 
-Renderer_loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
-    if this == nil {
-        return false
-    }
-
-    context = this._ctx
-
-    if this._library != nil && this._library != VULKAN_LOADER_DEFAULT_HANDLE {
-        _log(this, krfw.DebugSeverity.Warning, "Can't load Vulkan loader with new path: library already loaded")
-        return false
-    }
-
-    library, ok := dynlib.load_library(path)
-    if !ok {
-        _log(this, krfw.DebugSeverity.Error, "Failed to load Vulkan loader using custom path")
-        return false
-    }
-
-    this._library = library
-    return true
-}
-
-Renderer_loadVulkanLoader :: proc "c" (this: ^Renderer, len: u32, path: cstring) -> b32 {
-    if this == nil {
-        return false
-    }
-
-    context = this._ctx
-
-    pathString := strings.string_from_ptr(transmute([^]u8)path, int(len))
-    return Renderer_loadVulkanLoaderOdin(this, pathString)
-}
-
-Renderer_loadVulkanLoaderUnicode :: proc "c" (this: ^Renderer, len: u32, path: [^]rune) -> b32 {
-    if this == nil {
-        return false
-    }
-
-    context = this._ctx
-
-    pathString := utf8.runes_to_string(path[:len], context.temp_allocator)
-    defer delete(pathString, context.temp_allocator)
-
-    return Renderer_loadVulkanLoaderOdin(this, pathString)
-}
-
-Renderer_setDriverPreferenceOdin :: proc "c" (this: ^Renderer, driver: string) {
-    if this == nil {
-        return
-    }
-
-    context = this._ctx
-
-    if this._buffers == nil {
-        this._buffers = new(_RendererBuffers)
-    }
-
-    if len(driver) >= vk.MAX_DRIVER_NAME_SIZE {
-        _log(this, .Warning, "Driver preference name (%v bytes) is longer than possible actual driver name (%v bytes); truncating driver preference name", len(driver), vk.MAX_DRIVER_NAME_SIZE)
-    }
-
-    mem.copy_non_overlapping(&this._driverPreference[0], raw_data(driver), min(len(driver), 4095))
-    this._driverPreference[min(len(driver), 4095) + 1] = 0
-}
-
-Renderer_setDriverPreference :: proc "c" (this: ^Renderer, len: u32, driver: cstring) {
-    if this == nil {
-        return
-    }
-
-    context = this._ctx
-
-    Renderer_setDriverPreferenceOdin(this, strings.string_from_ptr(transmute([^]u8)driver, int(len)))
-}
-
-Renderer_setAllocator :: proc "c" (this: ^Renderer, allocator: ^vk.AllocationCallbacks) {
-    if this == nil {
-        return
-    }
-
-    context = this._ctx
-
-    this._allocator = allocator
-}
-
-/* IRenderer functions */
-Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false), debug := b32(false)) -> b32 {
+VkRenderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := b32(false), debug := b32(false)) -> b32 {
     if this == nil {
         return false
     }
@@ -1298,7 +1182,7 @@ Renderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless := 
     return true
 }
 
-Renderer_destroy :: proc "c" (this: ^Renderer) {
+VkRenderer_destroy :: proc "c" (this: ^Renderer) {
     if this == nil {
         return
     }
@@ -1573,7 +1457,7 @@ _Renderer_finishCreateWSI :: proc(this: ^Renderer, window: ^krfw.Window) -> b32 
     return true
 }
 
-Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WSISetting.DontCare) -> b32 {
+VkRenderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting := krfw.WSISetting.DontCare) -> b32 {
     if this == nil {
         return false
     }
@@ -1617,7 +1501,7 @@ Renderer_createWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window, setting :
     return _Renderer_finishCreateWSI(this, window)
 }
 
-Renderer_destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
+VkRenderer_destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
     if this == nil {
         return
     }
@@ -1659,7 +1543,7 @@ Renderer_destroyWSI :: proc "c" (this: ^Renderer, window: ^krfw.Window) {
     delete_key(&this._backbufferPools, window^)
 }
 
-Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^Pass, window: ^krfw.Window) -> b32 {
+VkRenderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]^Pass, window: ^krfw.Window) -> b32 {
     if this == nil {
         return false
     }
@@ -1864,8 +1748,93 @@ Renderer_executePasses :: proc "c" (this: ^Renderer, passCount: u32, passes: [^]
     return true
 }
 
-/* Vulkan interface */
-Renderer_createFencePool :: proc "c" (this: ^Renderer, fencePool: ^FencePool) -> b32 {
+/* IVkRenderer */
+VkRenderer_loadVulkanLoaderOdin :: proc "c" (this: ^Renderer, path: string) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    if this._library != nil && this._library != VULKAN_LOADER_DEFAULT_HANDLE {
+        _log(this, krfw.DebugSeverity.Warning, "Can't load Vulkan loader with new path: library already loaded")
+        return false
+    }
+
+    library, ok := dynlib.load_library(path)
+    if !ok {
+        _log(this, krfw.DebugSeverity.Error, "Failed to load Vulkan loader using custom path")
+        return false
+    }
+
+    this._library = library
+    return true
+}
+
+VkRenderer_loadVulkanLoader :: proc "c" (this: ^Renderer, len: u32, path: cstring) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    pathString := strings.string_from_ptr(transmute([^]u8)path, int(len))
+    return Renderer_loadVulkanLoaderOdin(this, pathString)
+}
+
+VkRenderer_loadVulkanLoaderUnicode :: proc "c" (this: ^Renderer, len: u32, path: [^]rune) -> b32 {
+    if this == nil {
+        return false
+    }
+
+    context = this._ctx
+
+    pathString := utf8.runes_to_string(path[:len], context.temp_allocator)
+    defer delete(pathString, context.temp_allocator)
+
+    return Renderer_loadVulkanLoaderOdin(this, pathString)
+}
+
+VkRenderer_setDriverPreferenceOdin :: proc "c" (this: ^Renderer, driver: string) {
+    if this == nil {
+        return
+    }
+
+    context = this._ctx
+
+    if this._buffers == nil {
+        this._buffers = new(_RendererBuffers)
+    }
+
+    if len(driver) >= vk.MAX_DRIVER_NAME_SIZE {
+        _log(this, .Warning, "Driver preference name (%v bytes) is longer than possible actual driver name (%v bytes); truncating driver preference name", len(driver), vk.MAX_DRIVER_NAME_SIZE)
+    }
+
+    mem.copy_non_overlapping(&this._driverPreference[0], raw_data(driver), min(len(driver), 4095))
+    this._driverPreference[min(len(driver), 4095) + 1] = 0
+}
+
+VkRenderer_setDriverPreference :: proc "c" (this: ^Renderer, len: u32, driver: cstring) {
+    if this == nil {
+        return
+    }
+
+    context = this._ctx
+
+    Renderer_setDriverPreferenceOdin(this, strings.string_from_ptr(transmute([^]u8)driver, int(len)))
+}
+
+VkRenderer_setAllocator :: proc "c" (this: ^Renderer, allocator: ^vk.AllocationCallbacks) {
+    if this == nil {
+        return
+    }
+
+    context = this._ctx
+
+    this._allocator = allocator
+}
+
+VkRenderer_createFencePool :: proc "c" (this: ^Renderer, fencePool: ^FencePool) -> b32 {
     if this == nil {
         return false
     }
@@ -1895,7 +1864,7 @@ Renderer_createFencePool :: proc "c" (this: ^Renderer, fencePool: ^FencePool) ->
     return true
 }
 
-Renderer_createSemaphorePool :: proc "c" (this: ^Renderer, semaphorePool: ^SemaphorePool) -> b32 {
+VkRenderer_createSemaphorePool :: proc "c" (this: ^Renderer, semaphorePool: ^SemaphorePool) -> b32 {
     if this == nil {
         return false
     }
@@ -1925,7 +1894,7 @@ Renderer_createSemaphorePool :: proc "c" (this: ^Renderer, semaphorePool: ^Semap
     return true
 }
 
-Renderer_createCommandPool :: proc "c" (this: ^Renderer, commandPool: ^CommandPool, fencePool: ^FencePool, queue: ^Queue) -> b32 {
+VkRenderer_createCommandPool :: proc "c" (this: ^Renderer, commandPool: ^CommandPool, fencePool: ^FencePool, queue: ^Queue) -> b32 {
     if this == nil {
         return false
     }
@@ -1973,7 +1942,7 @@ Renderer_createCommandPool :: proc "c" (this: ^Renderer, commandPool: ^CommandPo
     return true
 }
 
-Renderer_createResourcePool :: proc "c" (this: ^Renderer, resourcePool: ^ResourcePool, createInfo: ^vma.Pool_Create_Info) -> b32 {
+VkRenderer_createResourcePool :: proc "c" (this: ^Renderer, resourcePool: ^ResourcePool, createInfo: ^vma.Pool_Create_Info) -> b32 {
     if this == nil {
         return false
     }
@@ -2013,7 +1982,7 @@ Renderer_createResourcePool :: proc "c" (this: ^Renderer, resourcePool: ^Resourc
     return true
 }
 
-Renderer_getDefaultFencePool :: proc "c" (this: ^Renderer) -> ^FencePool {
+VkRenderer_getDefaultFencePool :: proc "c" (this: ^Renderer) -> ^FencePool {
     if this == nil {
         return nil
     }
@@ -2028,7 +1997,7 @@ Renderer_getDefaultFencePool :: proc "c" (this: ^Renderer) -> ^FencePool {
     return &this._defaultFencePool
 }
 
-Renderer_getDefaultSemaphorePool :: proc "c" (this: ^Renderer) -> ^SemaphorePool {
+VkRenderer_getDefaultSemaphorePool :: proc "c" (this: ^Renderer) -> ^SemaphorePool {
     if this == nil {
         return nil
     }
@@ -2043,7 +2012,7 @@ Renderer_getDefaultSemaphorePool :: proc "c" (this: ^Renderer) -> ^SemaphorePool
     return &this._defaultSemaphorePool
 }
 
-Renderer_getDefaultCommandPool :: proc "c" (this: ^Renderer, queueType: QueueType) -> ^CommandPool {
+VkRenderer_getDefaultCommandPool :: proc "c" (this: ^Renderer, queueType: QueueType) -> ^CommandPool {
     if this == nil {
         return nil
     }
@@ -2074,7 +2043,7 @@ Renderer_getDefaultCommandPool :: proc "c" (this: ^Renderer, queueType: QueueTyp
     return nil
 }
 
-Renderer_getDefaultResourcePool :: proc "c" (this: ^Renderer) -> ^ResourcePool {
+VkRenderer_getDefaultResourcePool :: proc "c" (this: ^Renderer) -> ^ResourcePool {
     if this == nil {
         return nil
     }
@@ -2089,7 +2058,7 @@ Renderer_getDefaultResourcePool :: proc "c" (this: ^Renderer) -> ^ResourcePool {
     return &this._defaultResourcePool
 }
 
-Renderer_getAllocator :: proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks {
+VkRenderer_getAllocator :: proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks {
     if this == nil {
         return nil
     }
@@ -2099,7 +2068,7 @@ Renderer_getAllocator :: proc "c" (this: ^Renderer) -> ^vk.AllocationCallbacks {
     return this._allocator
 }
 
-Renderer_getInstance :: proc "c" (this: ^Renderer) -> ^Instance {
+VkRenderer_getInstance :: proc "c" (this: ^Renderer) -> ^Instance {
     if this == nil {
         return nil
     }
@@ -2114,7 +2083,7 @@ Renderer_getInstance :: proc "c" (this: ^Renderer) -> ^Instance {
     return &this._instance
 }
 
-Renderer_getDevice :: proc "c" (this: ^Renderer) -> ^Device {
+VkRenderer_getDevice :: proc "c" (this: ^Renderer) -> ^Device {
     if this == nil {
         return nil
     }

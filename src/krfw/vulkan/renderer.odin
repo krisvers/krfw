@@ -9,6 +9,7 @@ import "core:dynlib"
 import "core:strings"
 import "core:unicode/utf8"
 
+import "../kom"
 import "../../krfw"
 import vk "vendor:vulkan"
 import "vma"
@@ -83,230 +84,103 @@ when ODIN_OS == .Windows {
     VULKAN_LOADER_DEFAULT_PATHS := []string {}
 }
 
-RENDERER := Renderer {
-    /* inherited functions */
-    setDebugLogger  = krfw.ProcIRendererSetDebugLogger(Renderer_setDebugLogger),
-    init            = krfw.ProcIRendererInit(Renderer_init),
-    destroy         = krfw.ProcIRendererDestroy(Renderer_destroy),
-    createWSI       = krfw.ProcIRendererCreateWSI(Renderer_createWSI),
-    destroyWSI      = krfw.ProcIRendererDestroyWSI(Renderer_destroyWSI),
-    executePasses   = krfw.ProcIRendererExecutePasses(Renderer_executePasses),
-
-    /* pre-init backend functions */
-    loadVulkanLoaderOdin    = Renderer_loadVulkanLoaderOdin,
-    loadVulkanLoader        = Renderer_loadVulkanLoader,
-    loadVulkanLoaderUnicode = Renderer_loadVulkanLoaderUnicode,
-    setDriverPreferenceOdin = Renderer_setDriverPreferenceOdin,
-    setDriverPreference     = Renderer_setDriverPreference,
-    setAllocator            = Renderer_setAllocator,
-
-    /* Vulkan interface functions */
-    createFencePool         = Renderer_createFencePool,
-    createSemaphorePool     = Renderer_createSemaphorePool,
-    createCommandPool       = Renderer_createCommandPool,
-    createResourcePool      = Renderer_createResourcePool,
-
-    getDefaultFencePool     = Renderer_getDefaultFencePool,
-    getDefaultSemaphorePool = Renderer_getDefaultSemaphorePool,
-    getDefaultCommandPool   = Renderer_getDefaultCommandPool,
-    getDefaultResourcePool  = Renderer_getDefaultResourcePool,
-
-    getAllocator            = Renderer_getAllocator,
-    getInstance             = Renderer_getInstance,
-    getDevice               = Renderer_getDevice,
-
-    _ctx                    = runtime.default_context(),
-    _library                = VULKAN_LOADER_DEFAULT_HANDLE,
-    _allocator              = nil,
+VkQueuedWindowData :: struct {
+    window:     krfw.Window,
+    setting:    krfw.WSISetting,
 }
 
-_logManual :: proc(this: ^Renderer, severity: krfw.DebugSeverity, message: cstring, origin: cstring) {
-    assert(this != nil)
+VkRendererData :: struct {
+    _refCount:          u64,
 
-    context = this._ctx
-    if this._debugLogger == nil {
-        return
-    }
+    _debugLogger:               krfw.ProcDebugLogger,
+    _debugLoggerLowestSeverity: krfw.DebugSeverity,
+    _ctx:                       runtime.Context,
+    _library:                   dynlib.Library,
+    _allocator:                 ^vk.AllocationCallbacks,
+    _globalFunctions:           GlobalFunctionPointers,
+    _driverPreferenceBuffer:    [vk.MAX_DRIVER_NAME_SIZE]u8,
 
-    if severity < this._debugLoggerLowestSeverity {
-        return
-    }
-    
-    this._debugLogger(severity, u32(len(origin)), origin, u32(len(message)), message)
+    /* pre-init, destroyed at the end of init */
+    _areWindowsQueued:  bool,
+    _queuedWindows:     [dynamic]VulkanQueuedWindowData,
+
+    /* init members */
+    _headless:          bool,
+    _debug:             bool,
+    _instance:          Instance,
+    _device:            Device,
+    _vma:               vma.Allocator,
+    _backbufferPools:   map[krfw.Window]BackbufferPool,
+
+    /* note: queues may be aliases of one another */
+    _queues:    []Queue,
+
+    _generalQueue:  ^Queue,
+    _presentQueue:  ^Queue,
+    _graphicsQueue: ^Queue,
+    _transferQueue: ^Queue,
+    _computeQueue:  ^Queue,
+
+    /* pools */
+    _defaultFencePool:      FencePool,
+    _defaultSemaphorePool:  SemaphorePool,
+    _defaultResourcePool:   ResourcePool,
+
+    /* other state */
+    _performingDestruction: b32,
 }
 
-_logAuto :: proc(this: ^Renderer, severity: krfw.DebugSeverity, format: string, args: ..any, loc := #caller_location) {
-    assert(this != nil)
-
-    context = this._ctx
-
-    origin := fmt.ctprintf("%s():%d", loc.procedure, loc.line)
-    defer delete(origin, context.temp_allocator)
-
-    message := fmt.ctprintf(format, ..args)
-    defer delete(message, context.temp_allocator)
-
-    _logManual(this, severity, message, origin)
+VkRendererIVkRenderer :: struct {
+    interface:      IVkRenderer,
+    base:           ^VkRenderer,
 }
 
-_logAutoExplicitOrigin :: proc(this: ^Renderer, severity: krfw.DebugSeverity, origin: cstring, format: string, args: ..any) {
-    assert(this != nil)
-
-    context = this._ctx
-
-    message := fmt.ctprintf(format, ..args)
-    defer delete(message, context.temp_allocator)
-
-    _logManual(this, severity, message, origin)
+VkRenderer :: struct {
+    using _:            VkRendererData,
+    using ivkrenderer:  VkRendererIVkRenderer,
 }
 
-_log :: proc{ _logManual, _logAuto }
+RENDERER := VkRenderer {
+    _ctx        = runtime.default_context(),
+    _library    = VULKAN_LOADER_DEFAULT_HANDLE,
+    _allocator  = nil,
 
-/* Vulkan helper functions */
-_createSurface :: proc "c" (this: ^Renderer, window: ^krfw.Window) -> vk.SurfaceKHR {
-    if this == nil || window == nil {
-        return 0
+    ivkrenderer = {
+        interface = {
+            /* IBase */
+            retain                  = kom.ProcIBaseRetain(VkRenderer_IBase_retain),
+            release                 = kom.ProcIBaseRelease(VkRenderer_IBase_release),
+            queryInterface          = kom.ProcIBaseQueryInterface(VkRenderer_IBase_queryInterface),
+
+            /* IRenderer */
+            setDebugLogger          = krfw.ProcIRendererSetDebugLogger(VkRenderer_IRenderer_setDebugLogger),
+            init                    = krfw.ProcIRendererInit(VkRenderer_IRenderer_init),
+            createWSI               = krfw.ProcIRendererCreateWSI(VkRenderer_IRenderer_createWSI),
+            destroyWSI              = krfw.ProcIRendererDestroyWSI(VkRenderer_IRenderer_destroyWSI),
+            executePasses           = krfw.ProcIRendererExecutePasses(VkRenderer_IRenderer_executePasses),
+
+            /* IVkRenderer */
+            loadVulkanLoaderOdin    = ProcIVkRendererLoadVulkanLoaderOdin(VkRenderer_IVkRenderer_loadVulkanLoaderOdin),
+            loadVulkanLoader        = ProcIVkRendererLoadVulkanLoader(VkRenderer_IVkRenderer_loadVulkanLoader),
+            loadVulkanLoaderUnicode = ProcIVkRendererLoadVulkanLoaderUnicode(VkRenderer_IVkRenderer_loadVulkanLoaderUnicode),
+            setDriverPreferenceOdin = ProcIVkRendererSetDriverPreferenceOdin(VkRenderer_IVkRenderer_setDriverPreferenceOdin),
+            setDriverPreference     = ProcIVkRendererSetDriverPreference(VkRenderer_IVkRenderer_setDriverPreference),
+            setAllocator            = ProcIVkRendererSetAllocator(VkRenderer_IVkRenderer_setAllocator),
+            createFencePool         = ProcIVkRendererCreateFencePool(VkRenderer_IVkRenderer_createFencePool),
+            createSemaphorePool     = ProcIVkRendererCreateSemaphorePool(VkRenderer_IVkRenderer_createSemaphorePool),
+            createCommandPool       = ProcIVkRendererCreateCommandPool(VkRenderer_IVkRenderer_createCommandPool),
+            createResourcePool      = ProcIVkRendererCreateResourcePool(VkRenderer_IVkRenderer_createResourcePool),
+            getDefaultFencePool     = ProcIVkRendererGetDefaultFencePool(VkRenderer_IVkRenderer_getDefaultFencePool),
+            getDefaultSemaphorePool = ProcIVkRendererGetDefaultSemaphorePool(VkRenderer_IVkRenderer_getDefaultSemaphorePool),
+            getDefaultCommandPool   = ProcIVkRendererGetDefaultCommandPool(VkRenderer_IVkRenderer_getDefaultCommandPool),
+            getDefaultResourcePool  = ProcIVkRendererGetDefaultResourcePool(VkRenderer_IVkRenderer_getDefaultResourcePool),
+            getAllocator            = ProcIVkRendererGetAllocator(VkRenderer_IVkRenderer_getAllocator),
+            getInstance             = ProcIVkRendererGetInstance(VkRenderer_IVkRenderer_getInstance),
+            getDevice               = ProcIVkRendererGetDevice(VkRenderer_IVkRenderer_getDevice),
+        },
+
+        base = nil,
     }
-
-    context = this._ctx
-
-    if this._headless {
-        _log(this, .Warning, "Called Vulkan backend internal _createSurface with a headless renderer; surface support is not likely to be enabled")
-    }
-
-    surface: vk.SurfaceKHR
-    when ODIN_OS == .Windows {
-        if window.nativeWindowType != .Win32 {
-            _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: not a Win32 window")
-            return 0
-        }
-
-        createWin32SurfaceKHR := vk.ProcCreateWin32SurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateWin32SurfaceKHR"))
-        if createWin32SurfaceKHR == nil {
-            _log(this, .Error, "Failed to load vkCreateWin32SurfaceKHR required for creating a Vulkan surface")
-            return 0
-        }
-
-        ci := vk.Win32SurfaceCreateInfoKHR {
-            sType = .WIN32_SURFACE_CREATE_INFO_KHR,
-            hinstance = vk.HINSTANCE(window.nativeDisplayHandle),
-            hwnd = vk.HWND(window.nativeWindowHandle),
-        }
-
-        if createWin32SurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
-            _log(this, .Error, "Failed to create a Vulkan surface with vkCreateWin32SurfaceKHR")
-            return 0
-        }
-    } else when ODIN_OS == .Linux {
-        #partial switch window.nativeWindowType {
-            case .Xlib:
-                createXlibSurfaceKHR := vk.ProcCreateXlibSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateXlibSurfaceKHR"))
-                if createXlibSurfaceKHR == nil {
-                    _log(this, .Error, "Failed to load vkCreateXlibSurfaceKHR required for creating a Vulkan surface")
-                    return 0
-                }
-
-                ci := vk.XlibSurfaceCreateInfoKHR {
-                    sType = .XLIB_SURFACE_CREATE_INFO_KHR,
-                    dpy = (^vk.XlibDisplay)(window.nativeDisplayHandle),
-                    window = (vk.XlibWindow)(window.nativeWindowHandle),
-                }
-
-                if createXlibSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
-                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateXlibSurfaceKHR")
-                    return 0
-                }
-            case .Xcb:
-                createXcbSurfaceKHR := vk.ProcCreateXcbSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateXcbSurfaceKHR"))
-                if createXcbSurfaceKHR == nil {
-                    _log(this, .Error, "Failed to load vkCreateXcbSurfaceKHR required for creating a Vulkan surface")
-                    return 0
-                }
-
-                ci := vk.XcbSurfaceCreateInfoKHR {
-                    sType = .XCB_SURFACE_CREATE_INFO_KHR,
-                    connection = (^vk.xcb_connection_t)(window.nativeDisplayHandle),
-                    window = (vk.xcb_window_t)(window.nativeWindowHandle),
-                }
-
-                if createXcbSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
-                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateXcbSurfaceKHR")
-                    return 0
-                }
-            case .Wayland:
-                createWaylandSurfaceKHR := vk.ProcCreateWaylandSurfaceKHR(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateWaylandSurfaceKHR"))
-                if createWaylandSurfaceKHR == nil {
-                    _log(this, .Error, "Failed to load vkCreateWaylandSurfaceKHR required for creating a Vulkan surface")
-                    return 0
-                }
-
-                ci := vk.WaylandSurfaceCreateInfoKHR {
-                    sType = .WAYLAND_SURFACE_CREATE_INFO_KHR,
-                    display = (^vk.wl_display)(window.nativeDisplayHandle),
-                    surface = (^vk.wl_surface)(window.nativeWindowHandle),
-                }
-
-                if createWaylandSurfaceKHR(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
-                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateWaylandSurfaceKHR")
-                    return 0
-                }
-            case:
-                _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: not a Xlib, Xcb or Wayland window")
-                return 0
-        }
-    } else when ODIN_OS == .Darwin {
-        #partial switch window.nativeWindowType {
-            case .Metal:
-                createMetalSurfaceEXT := vk.ProcCreateMetalSurfaceEXT(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateMetalSurfaceEXT"))
-                if createMetalSurfaceEXT == nil {
-                    _log(this, .Error, "Failed to load vkCreateMetalSurfaceEXT required for creating a Vulkan surface")
-                    return 0
-                }
-
-                layer := (^vk.CAMetalLayer)(window.nativeWindowHandle)
-                if layer == nil {
-                    _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: Metal layer is nil")
-                    return 0
-                }
-
-                ci := vk.MetalSurfaceCreateInfoEXT {
-                    sType = .METAL_SURFACE_CREATE_INFO_EXT,
-                    pLayer = layer,
-                }
-
-                if createMetalSurfaceEXT(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
-                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateMetalSurfaceEXT")
-                    return 0
-                }
-            case .Cocoa:
-                createMetalSurfaceEXT := vk.ProcCreateMetalSurfaceEXT(this._instance.getInstanceProcAddr(this._instance.instance, "vkCreateMetalSurfaceEXT"))
-                if createMetalSurfaceEXT == nil {
-                    _log(this, .Error, "Failed to load vkCreateMetalSurfaceEXT required for creating a Vulkan surface")
-                    return 0
-                }
-
-                layer := (^vk.CAMetalLayer)(_getCAMetalLayerFromNSWindow(window.nativeWindowHandle))
-                if layer == nil {
-                    _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: Metal layer derived from window is nil")
-                    return 0
-                }
-
-                ci := vk.MetalSurfaceCreateInfoEXT {
-                    sType = .METAL_SURFACE_CREATE_INFO_EXT,
-                    pLayer = layer,
-                }
-
-                if createMetalSurfaceEXT(this._instance.instance, &ci, this._allocator, &surface) != .SUCCESS {
-                    _log(this, .Error, "Failed to create a Vulkan surface with vkCreateMetalSurfaceEXT")
-                    return 0
-                }
-            case:
-                _log(this, .Error, "Called Vulkan backend internal _createSurface with invalid window: not a Metal or Cocoa window")
-                return 0
-        }
-    }
-
-    return surface
 }
 
 /* pre-init */

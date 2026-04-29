@@ -131,7 +131,7 @@ VkRendererData :: struct {
 }
 
 VkRendererIBase :: struct {
-    interface:  IBase,
+    interface:  kom.IBase,
     base:       ^VkRenderer,
 }
 
@@ -146,7 +146,7 @@ VkRendererIVkRenderer :: struct {
 }
 
 VkRenderer :: struct {
-    data:           VkRendererData,
+    using _:        VkRendererData,
 
     ibase:          VkRendererIBase,
     irenderer:      VkRendererIRenderer,
@@ -173,10 +173,6 @@ VkRenderer_init :: proc "c" (this: ^Renderer, lowPower := b32(false), headless :
     context = this._ctx
 
     /* setup containers */
-    if this._buffers == nil {
-        this._buffers = new(_RendererBuffers)
-    }
-
     this._headless = bool(headless)
     this._debug = bool(debug)
     this._backbufferPools = make(map[krfw.Window]BackbufferPool)

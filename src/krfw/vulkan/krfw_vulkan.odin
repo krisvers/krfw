@@ -337,8 +337,8 @@ IVkPass :: struct {
 }
 
 /* IVkResourcePool (eff18254-eefd-4823-899e-40e62fc64035) */
-ProcIVkResourcePoolCreateBuffer   :: #type proc "c" (this: ^IVkResourcePool, buffer: ^Buffer, createInfo: ^vk.BufferCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> b32
-ProcIVkResourcePoolCreateImage    :: #type proc "c" (this: ^IVkResourcePool, image: ^Image, createInfo: ^vk.ImageCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> b32
+ProcIVkResourcePoolCreateBuffer   :: #type proc "c" (this: ^IVkResourcePool, createInfo: ^vk.BufferCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> ^IVkBuffer
+ProcIVkResourcePoolCreateImage    :: #type proc "c" (this: ^IVkResourcePool, createInfo: ^vk.ImageCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> ^IVkImage
 
 IVkResourcePool_IID :: kom.IID {
     0xef, 0xf1, 0x82, 0x54,

@@ -4,6 +4,7 @@ package krfw_vulkan
 import "base:runtime"
 
 import "core:fmt"
+import "core:mem"
 
 import "../../krfw"
 import vk "vendor:vulkan"
@@ -195,4 +196,8 @@ _createSurface :: proc "c" (this: ^VkRenderer, window: ^krfw.Window) -> vk.Surfa
     }
 
     return surface
+}
+
+getBaseFromInterface :: proc(interface: ^kom.IBase, $T: typeid) -> ^T {
+    return (^T)(mem.ptr_offset(interface, size_of(rawptr)))
 }

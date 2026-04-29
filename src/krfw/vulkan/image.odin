@@ -15,31 +15,31 @@ VkImageData :: struct {
     _resourcePool:  ^VkResourcePool,
     _allocation:    vma.Allocation,
 
-    _isPersistent:  bool,
-    _isBackbuffer:  bool,
+    _isPersistent:  b32,
+    _isBackbuffer:  b32,
 
     _image:         vk.Image,
     _layout:        vk.ImageLayout,
 }
 
 VkImageIBase :: struct {
-    interface:  kom.IBase,
     base:       ^VkImage,
+    interface:  kom.IBase,
 }
 
 VkImageIChild :: struct {
-    interface:  kom.IChild,
     base:       ^VkImage,
+    interface:  kom.IChild,
 }
 
 VkImageIVkResource :: struct {
-    interface:  IVkResource,
     base:       ^VkImage,
+    interface:  IVkResource,
 }
 
 VkImageIVkImage :: struct {
-    interface:  IVkImage,
     base:       ^VkImage,
+    interface:  IVkImage,
 }
 
 VkImage :: struct {
@@ -50,6 +50,9 @@ VkImage :: struct {
     ivkresource:    VkImageIVkResource,
     ivkimage:       VkImageIVkImage,
 }
+
+/* initializer */
+VkImage_new :: proc()
 
 /* IBase */
 VkImage_retain :: proc "c" (this: ^VkImage) -> u64 {
@@ -75,20 +78,18 @@ VkImage_release :: proc "c" (this: ^VkImage) -> u64 {
     }
 
     pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
+    device := pool._device
+    instance := device._instance
+    renderer := instance._renderer
 
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
-
-    if this._isBackbuffer && !renderer.base._performingDestruction {
-        log(renderer.base, .Warning, "Can't fully release image: is internal backbuffer (likely a double release or a missing retain)")
+    if this._isBackbuffer && !renderer._performingDestruction {
+        log(renderer, .Warning, "Can't fully release image: is internal backbuffer (likely a double release or a missing retain)")
         this._refCount = 1
         return max(u64)
     }
 
     assert(this._allocation != nil)
-    vma.destroy_image(renderer.base._vma, this._image, this._allocation)
+    vma.destroy_image(renderer._vma, this._image, this._allocation)
 
     delete(this)
     return 0
@@ -125,8 +126,6 @@ VkImage_getParent :: proc "c" (this: ^VkImage) -> ^kom.IBase {
     context = this._ctx^
 
     pool := this._resourcePool
-    assert(pool != nil)
-
     return &pool.ibase
 }
 
@@ -139,14 +138,12 @@ VkImage_getAllocationInfo :: proc "c" (this: ^VkImage, allocationInfo: ^vma.Allo
     context = this._ctx^
 
     pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
+    device := pool._device
+    instance := device._instance
+    renderer := instance._renderer
 
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
     assert(allocationInfo != nil)
-
-    vma.get_allocation_info(renderer.base._vma, this._allocation, allocationInfo)
+    vma.get_allocation_info(renderer._vma, this._allocation, allocationInfo)
     return true
 }
 
@@ -158,22 +155,20 @@ VkImage_mapResource :: proc "c" (this: ^VkImage) -> rawptr {
     context = this._ctx^
 
     pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
-
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
+    device := pool._device
+    instance := device._instance
+    renderer := instance._renderer
 
     allocationInfo: vma.Allocation_Info
-    vma.get_allocation_info(renderer.base._vma, this._allocation, &allocationInfo)
+    vma.get_allocation_info(renderer._vma, this._allocation, &allocationInfo)
 
     if this._isPersistent {
         return allocationInfo.mapped_data
     }
 
     data: rawptr
-    if vma.map_memory(renderer.base._vma, this._allocation, &data) != .SUCCESS {
-        log(renderer.base, .Error, "Failed to map image memory")
+    if vma.map_memory(renderer._vma, this._allocation, &data) != .SUCCESS {
+        log(renderer, .Error, "Failed to map image memory")
         return nil
     }
 
@@ -188,17 +183,15 @@ VkImage_unmapResource :: proc "c" (this: ^VkImage) {
     context = this._ctx^
 
     pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
-
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
+    device := pool._device
+    instance := device._instance
+    renderer := instance._renderer
     
     if this._isPersistent {
         return
     }
 
-    vma.unmap_memory(renderer.base._vma, this._allocation)
+    vma.unmap_memory(renderer._vma, this._allocation)
 }
 
 VkImage_flush :: proc "c" (this: ^VkImage, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32 {
@@ -209,19 +202,17 @@ VkImage_flush :: proc "c" (this: ^VkImage, offset: vk.DeviceSize, size: vk.Devic
     context = this._ctx^
 
     pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
-
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
+    device := pool._device
+    instance := device._instance
+    renderer := instance._renderer
     
     if this._isBackbuffer {
-        log(renderer.base, .Error, "Can't flush image resource: is internally-managed backbuffer")
+        log(renderer, .Error, "Can't flush image resource: is internally-managed backbuffer")
         return false
     }
 
-    if vma.flush_allocation(renderer.base._vma, this._allocation, offset, size) != .SUCCESS {
-        log(renderer.base, .Error, "Failed to flush image resource")
+    if vma.flush_allocation(renderer._vma, this._allocation, offset, size) != .SUCCESS {
+        log(renderer, .Error, "Failed to flush image resource")
         return false
     }
 
@@ -236,19 +227,17 @@ VkImage_invalidate :: proc "c" (this: ^VkImage, offset: vk.DeviceSize, size: vk.
     context = this._ctx^
 
     pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
-
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
+    device := pool._device
+    instance := device._instance
+    renderer := instance._renderer
     
     if this._isBackbuffer {
-        log(renderer.base, .Error, "Can't invalidate image resource: is internally-managed backbuffer")
+        log(renderer, .Error, "Can't invalidate image resource: is internally-managed backbuffer")
         return false
     }
 
-    if vma.invalidate_allocation(renderer.base._vma, this._allocation, offset, size) != .SUCCESS {
-        log(renderer.base, .Error, "Failed to invalidate image resource")
+    if vma.invalidate_allocation(renderer._vma, this._allocation, offset, size) != .SUCCESS {
+        log(renderer, .Error, "Failed to invalidate image resource")
         return false
     }
 
@@ -262,14 +251,6 @@ VkImage_getVulkanImage :: proc "c" (this: ^VkImage) -> vk.Image {
     }
 
     context = this._ctx^
-
-    pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
-
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
-
     return this._image
 }
 
@@ -279,14 +260,6 @@ VkImage_getLayout :: proc "c" (this: ^VkImage) -> vk.ImageLayout {
     }
 
     context = this._ctx^
-
-    pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
-
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
-
     return this._layout
 }
 
@@ -296,14 +269,6 @@ VkImage_setLayout :: proc "c" (this: ^VkImage, layout: vk.ImageLayout) {
     }
 
     context = this._ctx^
-
-    pool := this._resourcePool
-    device := kom.getParent(&pool.ichild, IVkDevice_IID, IVkDevice)
-    assert(device != nil)
-
-    renderer := kom.queryInterface(device, IVkRenderer_IID, VkRendererIVkRenderer)
-    assert(renderer != nil)
-
     this._layout = layout
 }
 

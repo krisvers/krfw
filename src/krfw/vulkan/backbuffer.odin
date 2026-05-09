@@ -1,3 +1,12 @@
+#+private
+package krfw_vulkan
+
+import "base:runtime"
+
+import vk "vendor:vulkan"
+
+import "../kom"
+
 /* BackbufferPool implementation */
 BackbufferPool_acquire :: proc "c" (this: ^BackbufferPool, mode: BackbufferPoolAcquisitionMode) -> ^Backbuffer {
     if this == nil || this._renderer == nil {

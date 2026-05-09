@@ -3,7 +3,7 @@ package krfw
 import "kom"
 
 VERSION_MAJOR :: 0
-VERSION_MINOR :: 2
+VERSION_MINOR :: 3
 
 /* general types */
 WSISetting :: enum i32 {

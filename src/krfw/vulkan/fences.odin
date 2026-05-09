@@ -1,3 +1,12 @@
+#+private
+package krfw_vulkan
+
+import "base:runtime"
+
+import vk "vendor:vulkan"
+
+import "../kom"
+
 /* FencePool implementation */
 FencePool_destroy :: proc "c" (this: ^FencePool) {
     if this == nil || this._renderer == nil {

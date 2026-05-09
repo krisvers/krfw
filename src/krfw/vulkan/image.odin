@@ -9,17 +9,22 @@ import "../kom"
 import "vma"
 
 VkImageData :: struct {
-    _refCount:      u64,
-    _ctx:           ^runtime.Context,
+    _refCount:          u64,
+    _ctx:               ^runtime.Context,
 
-    _resourcePool:  ^VkResourcePool,
-    _allocation:    vma.Allocation,
+    _resourcePool:      ^VkResourcePool,
+    _allocation:        vma.Allocation,
+    _aliasOffset:       vk.DeviceSize,
 
-    _isPersistent:  b32,
-    _isBackbuffer:  b32,
+    _isPersistent:      b32,
+    _isBackbuffer:      b32,
+    _isConcurrent:      b32,
 
-    _image:         vk.Image,
-    _layout:        vk.ImageLayout,
+    _image:             vk.Image,
+    _layout:            vk.ImageLayout,
+    _lastStageFlags:    vk.PipelineStageFlags,
+    _lastAccessMask:    vk.AccessFlags,
+    _lastQueueOwner:    ^IVkQueue,
 }
 
 VkImageIBase :: struct {
@@ -52,7 +57,111 @@ VkImage :: struct {
 }
 
 /* initializer */
-VkImage_new :: proc()
+VkImage_new :: proc(pool: ^VkResourcePool, allocation: vma.Allocation, vkImage: vk.Image, isPersistent: b32, isBackbuffer := b32(false), isConcurrent := b32(false), aliasOffset := max(vk.DeviceSize)) -> ^VkImage {
+    image := new(VkImage)
+
+    image^ = {
+        _refCount       = 1,
+        _ctx            = this._ctx,
+
+        _resourcePool   = this,
+        _allocation     = allocation,
+        _aliasOffset    = aliasOffset,
+
+        _isPersistent   = isPersistent,
+        _isBackbuffer   = isBackbuffer,
+        _isConcurrent   = isConcurrent,
+
+        _image          = vkImage,
+        _layout         = .UNDEFINED,
+
+        ibase           = {
+            base        = image,
+            interface   = {
+                /* IBase */
+                retain          = kom.ProcIBaseRetain(VkImage_IBase_retain),
+                release         = kom.ProcIBaseRelease(VkImage_IBase_release),
+                queryInterface  = kom.ProcIBaseQueryInterface(VkImage_IBase_queryInterface),
+            },
+        },
+
+        ichild          = {
+            base        = image,
+            interface   = {
+                /* IBase */
+                retain          = kom.ProcIBaseRetain(VkImage_IBase_retain),
+                release         = kom.ProcIBaseRelease(VkImage_IBase_release),
+                queryInterface  = kom.ProcIBaseQueryInterface(VkImage_IBase_queryInterface),
+
+                /* IChild */
+                getParent       = kom.ProcIChildGetParent(VkImage_IChild_getParent),
+            },
+        },
+
+        ivkresource     = {
+            base        = image,
+            interface   = {
+                /* IBase */
+                retain                  = kom.ProcIBaseRetain(VkImage_IBase_retain),
+                release                 = kom.ProcIBaseRelease(VkImage_IBase_release),
+                queryInterface          = kom.ProcIBaseQueryInterface(VkImage_IBase_queryInterface),
+
+                /* IChild */
+                getParent               = kom.ProcIChildGetParent(VkImage_IChild_getParent),
+                
+                /* IVkResource */
+                getVmaAllocationInfo    = ProcIVkResourceGetVmaAllocationInfo(VkImage_IVkResource_getVmaAllocationInfo),
+                getVmaAllocation        = ProcIVkResourceGetVmaAllocationInfo(VkImage_IVkResource_getVmaAllocation),
+                mapResource             = ProcIVkResourceMapResource(VkImage_IVkResource_mapResource),
+                unmapResource           = ProcIVkResourceUnmapResource(VkImage_IVkResource_unmapResource),
+                flush                   = ProcIVkResourceFlush(VkImage_IVkResource_flush),
+                invalidate              = ProcIVkResourceInvalidate(VkImage_IVkResource_invalidate),
+                isSharedConcurrent      = ProcIVkResourceIsSharedConcurrent(VkImage_IVkResource_isSharedConcurrent),
+                getLastStageFlags       = ProcIVkResourceGetLastStageFlags(VkImage_IVkResource_getLastStageFlags),
+                setLastStageFlags       = ProcIVkResourceSetLastStageFlags(VkImage_IVkResource_setLastStageFlags),
+                getLastAccessMask       = ProcIVkResourceGetLastAccessMask(VkImage_IVkResource_getLastAccessMask),
+                setLastAccessMask       = ProcIVkResourceSetLastAccessMask(VkImage_IVkResource_setLastAccessMask),
+                getLastQueueOwnership   = ProcIVkResourceGetLastQueueOwnership(VkImage_IVkResource_getLastQueueOwnership),
+                setLastQueueOwnership   = ProcIVkResourceSetLastQueueOwnership(VkImage_IVkResource_setLastQueueOwnership),
+            },
+        },
+
+        ivkimage        = {
+            base        = image,
+            interface   = {
+                /* IBase */
+                retain                  = kom.ProcIBaseRetain(VkImage_IBase_retain),
+                release                 = kom.ProcIBaseRelease(VkImage_IBase_release),
+                queryInterface          = kom.ProcIBaseQueryInterface(VkImage_IBase_queryInterface),
+
+                /* IChild */
+                getParent               = kom.ProcIChildGetParent(VkImage_IChild_getParent),
+                
+                /* IVkResource */
+                getVmaAllocationInfo    = ProcIVkResourceGetVmaAllocationInfo(VkImage_IVkResource_getVmaAllocationInfo),
+                getVmaAllocation        = ProcIVkResourceGetVmaAllocationInfo(VkImage_IVkResource_getVmaAllocation),
+                mapResource             = ProcIVkResourceMapResource(VkImage_IVkResource_mapResource),
+                unmapResource           = ProcIVkResourceUnmapResource(VkImage_IVkResource_unmapResource),
+                flush                   = ProcIVkResourceFlush(VkImage_IVkResource_flush),
+                invalidate              = ProcIVkResourceInvalidate(VkImage_IVkResource_invalidate),
+                isSharedConcurrent      = ProcIVkResourceIsSharedConcurrent(VkImage_IVkResource_isSharedConcurrent),
+                getLastStageFlags       = ProcIVkResourceGetLastStageFlags(VkImage_IVkResource_getLastStageFlags),
+                setLastStageFlags       = ProcIVkResourceSetLastStageFlags(VkImage_IVkResource_setLastStageFlags),
+                getLastAccessMask       = ProcIVkResourceGetLastAccessMask(VkImage_IVkResource_getLastAccessMask),
+                setLastAccessMask       = ProcIVkResourceSetLastAccessMask(VkImage_IVkResource_setLastAccessMask),
+                getLastQueueOwnership   = ProcIVkResourceGetLastQueueOwnership(VkImage_IVkResource_getLastQueueOwnership),
+                setLastQueueOwnership   = ProcIVkResourceSetLastQueueOwnership(VkImage_IVkResource_setLastQueueOwnership),
+
+                /* IVkImage */
+                getVulkanImage          = ProcIVkImageGetVulkanImage(VkImage_IVkImage_getVulkanImage),
+                getLayout               = ProcIVkImageGetLayout(VkImage_IVkImage_getLayout),
+                setLayout               = ProcIVkImageSetLayout(VkImage_IVkImage_setLayout),
+            },
+        },
+    }
+
+    return image
+}
 
 /* IBase */
 VkImage_retain :: proc "c" (this: ^VkImage) -> u64 {
@@ -78,9 +187,7 @@ VkImage_release :: proc "c" (this: ^VkImage) -> u64 {
     }
 
     pool := this._resourcePool
-    device := pool._device
-    instance := device._instance
-    renderer := instance._renderer
+    renderer := pool._renderer
 
     if this._isBackbuffer && !renderer._performingDestruction {
         log(renderer, .Warning, "Can't fully release image: is internal backbuffer (likely a double release or a missing retain)")
@@ -91,7 +198,7 @@ VkImage_release :: proc "c" (this: ^VkImage) -> u64 {
     assert(this._allocation != nil)
     vma.destroy_image(renderer._vma, this._image, this._allocation)
 
-    delete(this)
+    free(this)
     return 0
 }
 
@@ -130,7 +237,7 @@ VkImage_getParent :: proc "c" (this: ^VkImage) -> ^kom.IBase {
 }
 
 /* IVkResource */
-VkImage_getAllocationInfo :: proc "c" (this: ^VkImage, allocationInfo: ^vma.Allocation_Info) -> b32 {
+VkImage_getVmaAllocationInfo :: proc "c" (this: ^VkImage, allocationInfo: ^vma.Allocation_Info) -> b32 {
     if this == nil || this._ctx == nil {
         return false
     }
@@ -145,6 +252,15 @@ VkImage_getAllocationInfo :: proc "c" (this: ^VkImage, allocationInfo: ^vma.Allo
     assert(allocationInfo != nil)
     vma.get_allocation_info(renderer._vma, this._allocation, allocationInfo)
     return true
+}
+
+VkImage_getVmaAllocation :: proc "c" (this: ^VkImage) -> vma.Allocation {
+    if this == nil || this._ctx == nil {
+        return nil
+    }
+
+    context = this._ctx^
+    return this._allocation
 }
 
 VkImage_mapResource :: proc "c" (this: ^VkImage) -> rawptr {
@@ -244,6 +360,77 @@ VkImage_invalidate :: proc "c" (this: ^VkImage, offset: vk.DeviceSize, size: vk.
     return true
 }
 
+VkImage_isSharedConcurrent :: proc "c" (this: ^VkImage) -> b32 {
+    if this == nil || this._ctx == nil {
+        return false
+    }
+
+    context = this._ctx^
+    return this._isConcurrent
+}
+
+VkImage_getLastStageFlags :: proc "c" (this: ^VkImage) -> vk.PipelineStageFlags {
+    if this == nil || this._ctx == nil {
+        return {}
+    }
+
+    context = this._ctx^
+    return this._lastStageFlags
+}
+
+VkImage_setLastStageFlags :: proc "c" (this: ^VkImage, stages: vk.PipelineStageFlags) {
+    if this == nil || this._ctx == nil {
+        return
+    }
+
+    context = this._ctx^
+    this._lastStageFlags = stages
+}
+
+VkImage_getLastAccessMask :: proc "c" (this: ^VkImage) -> vk.AccessFlags {
+    if this == nil || this._ctx == nil {
+        return {}
+    }
+
+    context = this._ctx^
+    return this._lastAccessMask
+}
+
+VkImage_setLastAccessMask :: proc "c" (this: ^VkImage, access: vk.AccessFlags) {
+    if this == nil || this._ctx == nil {
+        return
+    }
+
+    context = this._ctx^
+    this._lastAccessMask = access
+}
+
+VkImage_getLastQueueOwnership :: proc "c" (this: ^VkImage) -> ^IVkQueue {
+    if this == nil || this._ctx == nil {
+        return {}
+    }
+
+    context = this._ctx^
+    return this._lastQueueOwner
+}
+
+VkImage_setLastQueueOwnership :: proc "c" (this: ^VkImage, queue: ^IVkQueue) {
+    if this == nil || this._ctx == nil {
+        return
+    }
+
+    context = this._ctx^
+
+    pool := this._resourcePool
+    device := pool._device
+    instance := device._instance
+    renderer := instance._renderer
+    
+    /* TODO: check that Queue is valid and child of renderer */
+
+    this._lastQueueOwner = queue
+}
+
 /* IVkImage */
 VkImage_getVulkanImage :: proc "c" (this: ^VkImage) -> vk.Image {
     if this == nil || this._ctx == nil {
@@ -278,7 +465,7 @@ VkImage_IBase_retain :: proc "c" (this: ^VkImageIBase) -> u64 {
         return 0
     }
 
-    return VkImage_retain(this.base)
+    return VkImage_retain(getBaseFromInterface(this))
 }
 
 VkImage_IBase_release :: proc "c" (this: ^VkImageIBase) -> u64 {
@@ -286,7 +473,7 @@ VkImage_IBase_release :: proc "c" (this: ^VkImageIBase) -> u64 {
         return max(u64)
     }
 
-    return VkImage_release(this.base)
+    return VkImage_release(getBaseFromInterface(this))
 }
 
 VkImage_IBase_queryInterface :: proc "c" (this: ^VkImageIBase, #by_ptr id: kom.IID) -> rawptr {
@@ -294,81 +481,33 @@ VkImage_IBase_queryInterface :: proc "c" (this: ^VkImageIBase, #by_ptr id: kom.I
         return nil
     }
 
-    return VkImage_queryInterface(this.base, id)
+    return VkImage_queryInterface(getBaseFromInterface(this), id)
 }
 
 /* IChild interface wrapper */
-VkImage_IChild_retain :: proc "c" (this: ^VkImageIChild) -> u64 {
-    if this == nil {
-        return 0
-    }
-
-    return VkImage_retain(this.base)
-}
-
-VkImage_IChild_release :: proc "c" (this: ^VkImageIChild) -> u64 {
-    if this == nil {
-        return max(u64)
-    }
-
-    return VkImage_release(this.base)
-}
-
-VkImage_IChild_queryInterface :: proc "c" (this: ^VkImageIChild, #by_ptr id: kom.IID) -> rawptr {
-    if this == nil {
-        return nil
-    }
-
-    return VkImage_queryInterface(this.base, id)
-}
-
 VkImage_IChild_getParent :: proc "c" (this: ^VkImageIChild) -> ^kom.IBase {
     if this == nil {
         return nil
     }
 
-    return VkImage_getParent(this.base)
+    return VkImage_getParent(getBaseFromInterface(this))
 }
 
 /* IVkResource interface wrapper */
-VkImage_IVkResource_retain :: proc "c" (this: ^VkImageIVkResource) -> u64 {
-    if this == nil {
-        return 0
-    }
-
-    return VkImage_retain(this.base)
-}
-
-VkImage_IVkResource_release :: proc "c" (this: ^VkImageIVkResource) -> u64 {
-    if this == nil {
-        return max(u64)
-    }
-
-    return VkImage_release(this.base)
-}
-
-VkImage_IVkResource_queryInterface :: proc "c" (this: ^VkImageIVkResource, #by_ptr id: kom.IID) -> rawptr {
-    if this == nil {
-        return nil
-    }
-
-    return VkImage_queryInterface(this.base, id)
-}
-
-VkImage_IVkResource_getParent :: proc "c" (this: ^VkImageIVkResource) -> ^kom.IBase {
-    if this == nil {
-        return nil
-    }
-
-    return VkImage_getParent(this.base)
-}
-
-VkImage_IVkResource_getAllocationInfo :: proc "c" (this: ^VkImageIVkResource, allocationInfo: ^vma.Allocation_Info) -> b32 {
+VkImage_IVkResource_getVmaAllocationInfo :: proc "c" (this: ^VkImageIVkResource, allocationInfo: ^vma.Allocation_Info) -> b32 {
     if this == nil {
         return false
     }
 
-    return VkImage_getAllocationInfo(this.base, allocationInfo)
+    return VkImage_getVmaAllocationInfo(getBaseFromInterface(this), allocationInfo)
+}
+
+VkImage_IVkResource_getVmaAllocation :: proc "c" (this: ^VkImageIVkResource) -> vma.Allocation {
+    if this == nil {
+        return nil
+    }
+
+    return VkImage_getVmaAllocation(getBaseFromInterface(this))
 }
 
 VkImage_IVkResource_mapResource :: proc "c" (this: ^VkImageIVkResource) -> rawptr {
@@ -376,7 +515,7 @@ VkImage_IVkResource_mapResource :: proc "c" (this: ^VkImageIVkResource) -> rawpt
         return nil
     }
 
-    return VkImage_mapResource(this.base)
+    return VkImage_mapResource(getBaseFromInterface(this))
 }
 
 VkImage_IVkResource_unmapResource :: proc "c" (this: ^VkImageIVkResource) {
@@ -384,7 +523,7 @@ VkImage_IVkResource_unmapResource :: proc "c" (this: ^VkImageIVkResource) {
         return
     }
 
-    VkImage_unmapResource(this.base)
+    VkImage_unmapResource(getBaseFromInterface(this))
 }
 
 VkImage_IVkResource_flush :: proc "c" (this: ^VkImageIVkResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32 {
@@ -392,7 +531,7 @@ VkImage_IVkResource_flush :: proc "c" (this: ^VkImageIVkResource, offset: vk.Dev
         return false
     }
 
-    return VkImage_flush(this.base, offset, size)
+    return VkImage_flush(getBaseFromInterface(this), offset, size)
 }
 
 VkImage_IVkResource_invalidate :: proc "c" (this: ^VkImageIVkResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32 {
@@ -400,89 +539,72 @@ VkImage_IVkResource_invalidate :: proc "c" (this: ^VkImageIVkResource, offset: v
         return false
     }
 
-    return VkImage_invalidate(this.base, offset, size)
+    return VkImage_invalidate(getBaseFromInterface(this), offset, size)
 }
 
-
-/* IVkResource interface wrapper */
-VkImage_IVkImage_retain :: proc "c" (this: ^VkImageIVkImage) -> u64 {
-    if this == nil {
-        return 0
-    }
-
-    return VkImage_retain(this.base)
-}
-
-VkImage_IVkImage_release :: proc "c" (this: ^VkImageIVkImage) -> u64 {
-    if this == nil {
-        return max(u64)
-    }
-
-    return VkImage_release(this.base)
-}
-
-VkImage_IVkImage_queryInterface :: proc "c" (this: ^VkImageIVkImage, #by_ptr id: kom.IID) -> rawptr {
-    if this == nil {
-        return nil
-    }
-
-    return VkImage_queryInterface(this.base, id)
-}
-
-VkImage_IVkImage_getParent :: proc "c" (this: ^VkImageIVkImage) -> ^kom.IBase {
-    if this == nil {
-        return nil
-    }
-
-    return VkImage_getParent(this.base)
-}
-
-VkImage_IVkImage_getAllocationInfo :: proc "c" (this: ^VkImageIVkImage, allocationInfo: ^vma.Allocation_Info) -> b32 {
+VkImage_IVkResource_isSharedConcurrent :: proc "c" (this: ^VkImageIVkResource) -> b32 {
     if this == nil {
         return false
     }
 
-    return VkImage_getAllocationInfo(this.base, allocationInfo)
+    return VkImage_isSharedConcurrent(getBaseFromInterface(this))
 }
 
-VkImage_IVkImage_mapResource :: proc "c" (this: ^VkImageIVkImage) -> rawptr {
+VkImage_IVkResource_getLastStageFlags :: proc "c" (this: ^VkImageIVkResource) -> vk.PipelineStageFlags {
     if this == nil {
-        return nil
+        return {}
     }
 
-    return VkImage_mapResource(this.base)
+    return VkImage_getLastStageFlags(getBaseFromInterface(this))
 }
 
-VkImage_IVkImage_unmapResource :: proc "c" (this: ^VkImageIVkImage) {
+VkImage_IVkResource_setLastStageFlags :: proc "c" (this: ^VkImageIVkResource, stages: vk.PipelineStageFlags) {
     if this == nil {
         return
     }
 
-    VkImage_unmapResource(this.base)
+    VkImage_setLastStageFlags(getBaseFromInterface(this), stages)
 }
 
-VkImage_IVkImage_flush :: proc "c" (this: ^VkImageIVkImage, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32 {
+VkImage_IVkResource_getLastAccessMask :: proc "c" (this: ^VkImageIVkResource) -> vk.AccessMask {
     if this == nil {
-        return false
+        return {}
     }
 
-    return VkImage_flush(this.base, offset, size)
+    return VkImage_getLastAccessMask(getBaseFromInterface(this))
 }
 
-VkImage_IVkImage_invalidate :: proc "c" (this: ^VkImageIVkImage, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32 {
+VkImage_IVkResource_setLastAccessMask :: proc "c" (this: ^VkImageIVkResource, access: vk.AccessMask) {
     if this == nil {
-        return false
+        return
     }
 
-    return VkImage_invalidate(this.base, offset, size)
+    VkImage_setLastAccessMask(getBaseFromInterface(this), access)
 }
 
+VkImage_IVkResource_getLastQueueOwnership :: proc "c" (this: ^VkImageIVkResource) -> ^IVkQueue {
+    if this == nil {
+        return nil
+    }
+
+    return VkImage_getLastQueueOwnership(getBaseFromInterface(this))
+}
+
+VkImage_IVkResource_setLastQueueOwnership :: proc "c" (this: ^VkImageIVkResource, queue: ^IVkQueue) {
+    if this == nil {
+        return
+    }
+
+    VkImage_setLastQueueOwnership(getBaseFromInterface(this), queue)
+}
+
+/* IVkImage interface wrapper */
 VkImage_IVkImage_getVulkanImage :: proc "c" (this: ^VkImageIVkImage) -> vk.Image {
     if this == nil {
         return 0
     }
 
-    return VkImage_getVulkanImage(this.base)
+    return VkImage_getVulkanImage(getBaseFromInterface(this))
 }
 
 VkImage_IVkImage_getLayout :: proc "c" (this: ^VkImageIVkImage) -> vk.ImageLayout {
@@ -490,7 +612,7 @@ VkImage_IVkImage_getLayout :: proc "c" (this: ^VkImageIVkImage) -> vk.ImageLayou
         return .UNDEFINED
     }
 
-    return VkImage_getLayout(this.base)
+    return VkImage_getLayout(getBaseFromInterface(this))
 }
 
 VkImage_IVkImage_setLayout :: proc "c" (this: ^VkImageIVkImage, layout: vk.ImageLayout) {
@@ -498,5 +620,5 @@ VkImage_IVkImage_setLayout :: proc "c" (this: ^VkImageIVkImage, layout: vk.Image
         return
     }
 
-    VkImage_setLayout(this.base, layout)
+    VkImage_setLayout(getBaseFromInterface(this), layout)
 }

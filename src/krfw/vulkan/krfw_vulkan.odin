@@ -219,8 +219,9 @@ IVkQueue :: struct {
 }
 
 /* IVkCommandPool (efb61d2b-7518-4d73-b513-49215772b010) */
-ProcIVkCommandPoolGetQueue              :: #type proc "c" (this: ^IVkCommandPool) -> ^IVkQueue
+ProcIVkCommandPoolGetVulkanCommandPool  :: #type proc "c" (this: ^IVkCommandPool) -> vk.CommandPool
 ProcIVkCommandPoolAcquireCommandBuffer  :: #type proc "c" (this: ^IVkCommandPool, bundle := b32(false)) -> ^IVkCommandBuffer
+ProcIVkCommandPoolSubmitCommandBuffers  :: #type proc "c" (this: ^IVkCommandPool, commandBufferCount: u32, commandBuffers: [^]^IVkCommandBuffer, submitInfoWaitCount: u32, submitInfoWaits: [^]SubmitInfoWait, signalSemaphoreCount: u32, signalSemaphores: [^]vk.Semaphore) -> ^IVkFence
 
 IVkCommandPool_IID :: kom.IID {
     0xef, 0xb6, 0x1d, 0x2b,
@@ -233,15 +234,21 @@ IVkCommandPool_IID :: kom.IID {
 IVkCommandPool :: struct {
     using ichild:           kom.IChild,
     
-    getQueue:               ProcIVkCommandPoolGetQueue,
+    getVulkanCommandPool:   ProcIVkCommandPoolGetVulkanCommandPool,
     acquireCommandBuffer:   ProcIVkCommandPoolAcquireCommandBuffer,
+    submitCommandBuffers:   ProcIVkCommandPoolSubmitCommandBuffers,
 }
 
 /* IVkCommandBuffer (f760d942-c36b-4cdb-91dd-f2e562b6df4e) */
-ProcIVkCommandBufferGetPool           :: #type proc "c" (this: ^IVkCommandBuffer) -> ^IVkCommandPool
-ProcIVkCommandBufferBegin             :: #type proc "c" (this: ^IVkCommandBuffer, #by_ptr beginInfo: vk.CommandBufferBeginInfo) -> vk.CommandBuffer
-ProcIVkCommandBufferEnd               :: #type proc "c" (this: ^IVkCommandBuffer) -> b32
-ProcIVkCommandBufferSubmitAndRelease  :: #type proc "c" (this: ^IVkCommandBuffer, submitInfoWaitCount: u32, submitInfoWaits: [^]SubmitInfoWait, signalSemaphoreCount: u32, signalSemaphores: [^]vk.Semaphore) -> ^IVkFence
+ProcIVkCommandBufferGetPool             :: #type proc "c" (this: ^IVkCommandBuffer) -> ^IVkCommandPool
+ProcIVkCommandBufferBegin               :: #type proc "c" (this: ^IVkCommandBuffer, #by_ptr beginInfo: vk.CommandBufferBeginInfo) -> vk.CommandBuffer
+ProcIVkCommandBufferExecuteBundle       :: #type proc "c" (this: ^IVkCommandBuffer, bundle: ^IVkCommandBuffer)
+ProcIVkCommandBufferExecutionBarrier    :: #type proc "c" (this: ^IVkCommandBuffer, srcStage: vk.PipelineStageFlags, dstStage: vk.PipelinestageFlags)
+ProcIVkCommandBufferImageTransition     :: #type proc "c" (this: ^IVkCommandBuffer, dstStage: vk.PipelineStageFlags, image: ^IVkImage, dstAccessMask: vk.AccessFlags, newLayout: vk.ImageLayout)
+ProcIVkCommandBufferBufferTransition    :: #type proc "c" (this: ^IVkCommandBuffer, dstStage: vk.PipelineStageFlags, buffer: ^IVkBuffer, dstAccessMask: vk.AccessFlags)
+ProcIVkCommandBufferTransferOwnership   :: #type proc "c" (this: ^IVkCommandBuffer, resource: ^IVkResource)
+ProcIVkCommandBufferEnd                 :: #type proc "c" (this: ^IVkCommandBuffer) -> b32
+ProcIVkCommandBufferSubmitAndRelease    :: #type proc "c" (this: ^IVkCommandBuffer, submitInfoWaitCount: u32, submitInfoWaits: [^]SubmitInfoWait, signalSemaphoreCount: u32, signalSemaphores: [^]vk.Semaphore) -> ^IVkFence
 
 IVkCommandBuffer_IID :: kom.IID {
     0xf7, 0x60, 0xd9, 0x42,
@@ -256,6 +263,11 @@ IVkCommandBuffer :: struct {
 
     getPool:            ProcIVkCommandBufferGetPool,
     begin:              ProcIVkCommandBufferBegin,
+    executeBundle:      ProcIVkCommandBufferExecuteBundle,
+    executionBarrier:   ProcIVkCommandBufferExecutionBarrier,
+    imageTransition:    ProcIVkCommandBufferImageTransition,
+    bufferTransition:   ProcIVkCommandBufferBufferTransition,
+    transferOwnership:  ProcIVkCommandBufferTransferOwnership,
     end:                ProcIVkCommandBufferEnd,
     submitAndRelease:   ProcIVkCommandBufferSubmitAndRelease,
 }
@@ -337,8 +349,11 @@ IVkPass :: struct {
 }
 
 /* IVkResourcePool (eff18254-eefd-4823-899e-40e62fc64035) */
-ProcIVkResourcePoolCreateBuffer   :: #type proc "c" (this: ^IVkResourcePool, createInfo: ^vk.BufferCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> ^IVkBuffer
-ProcIVkResourcePoolCreateImage    :: #type proc "c" (this: ^IVkResourcePool, createInfo: ^vk.ImageCreateInfo, allocationCreateInfo: ^vma.Allocation_Create_Info) -> ^IVkImage
+ProcIVkResourcePoolGetVmaPool           :: #type proc "c" (this: ^IVkResourcePool) -> vma.Pool
+ProcIVkResourcePoolCreateBuffer         :: #type proc "c" (this: ^IVkResourcePool, #by_ptr createInfo: vk.BufferCreateInfo, #by_ptr allocationCreateInfo: vma.Allocation_Create_Info) -> ^IVkBuffer
+ProcIVkResourcePoolCreateImage          :: #type proc "c" (this: ^IVkResourcePool, #by_ptr createInfo: vk.ImageCreateInfo, #by_ptr allocationCreateInfo: vma.Allocation_Create_Info) -> ^IVkImage
+ProcIVkResourcePoolCreateAliasedBuffer  :: #type proc "c" (this: ^IVkResourcePool, #by_ptr createInfo: vk.BufferCreateInfo, resourceToAlias: ^IVkResource, offset: vk.DeviceSize) -> ^IVkBuffer
+ProcIVkResourcePoolCreateAliasedImage   :: #type proc "c" (this: ^IVkResourcePool, #by_ptr createInfo: vk.ImageCreateInfo, resourceToAlias: ^IVkResource, offset: vk.DeviceSize) -> ^IVkImage
 
 IVkResourcePool_IID :: kom.IID {
     0xef, 0xf1, 0x82, 0x54,
@@ -349,18 +364,29 @@ IVkResourcePool_IID :: kom.IID {
 }
 
 IVkResourcePool :: struct {
-    using ichild:   kom.IChild,
+    using ichild:           kom.IChild,
 
-    createBuffer:   ProcIVkResourcePoolCreateBuffer,
-    createImage:    ProcIVkResourcePoolCreateImage,
+    getVmaPool:             ProcIVkResourcePoolGetVmaPool,
+    createBuffer:           ProcIVkResourcePoolCreateBuffer,
+    createImage:            ProcIVkResourcePoolCreateImage,
+    createAliasedBuffer:    ProcIVkResourcePoolCreateAliasedBuffer,
+    createAliasedImage:     ProcIVkResourcePoolCreateAliasedImage,
 }
 
 /* IVkResource (21f3ce42-4de9-4326-9ebb-1e761e05d37b) */
-ProcIVkResourceGetAllocationInfo  :: #type proc "c" (this: ^IVkResource, allocationInfo: ^vma.Allocation_Info) -> b32
-ProcIVkResourceMapResource        :: #type proc "c" (this: ^IVkResource) -> rawptr
-ProcIVkResourceUnmapResource      :: #type proc "c" (this: ^IVkResource)
-ProcIVkResourceFlush              :: #type proc "c" (this: ^IVkResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32
-ProcIVkResourceInvalidate         :: #type proc "c" (this: ^IVkResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32
+ProcIVkResourceGetVmaAllocationInfo     :: #type proc "c" (this: ^IVkResource, allocationInfo: ^vma.Allocation_Info) -> b32
+ProcIVkResourceGetVmaAllocation         :: #type proc "c" (this: ^IVkResource) -> vma.Allocation
+ProcIVkResourceMapResource              :: #type proc "c" (this: ^IVkResource) -> rawptr
+ProcIVkResourceUnmapResource            :: #type proc "c" (this: ^IVkResource)
+ProcIVkResourceFlush                    :: #type proc "c" (this: ^IVkResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32
+ProcIVkResourceInvalidate               :: #type proc "c" (this: ^IVkResource, offset: vk.DeviceSize, size: vk.DeviceSize) -> b32
+ProcIVkResourceIsSharedConcurrent       :: #type proc "c" (this: ^IVkResource) -> b32
+ProcIVkResourceGetLastStageFlags        :: #type proc "c" (this: ^IVkResource) -> vk.PipelineStageFlags
+ProcIVkResourceSetLastStageFlags        :: #type proc "c" (this: ^IVkResource, stages: vk.PipelineStageFlags)
+ProcIVkResourceGetLastAccessMask        :: #type proc "c" (this: ^IVkResource) -> vk.AccessFlags
+ProcIVkResourceSetLastAccessMask        :: #type proc "c" (this: ^IVkResource, access: vk.AccessFlags)
+ProcIVkResourceGetLastQueueOwnership    :: #type proc "c" (this: ^IVkResource) -> ^IVkQueue
+ProcIVkResourceSetLastQueueOwnership    :: #type proc "c" (this: ^IVkResource, queue: ^IVkQueue)
 
 IVkResource_IID :: kom.IID {
     0x21, 0xf3, 0xce, 0x42,
@@ -371,13 +397,22 @@ IVkResource_IID :: kom.IID {
 }
 
 IVkResource :: struct {
-    using ichild:       kom.IChild,
+    using ichild:           kom.IChild,
 
-    getAllocationInfo:  ProcIVkResourceGetAllocationInfo,
-    mapResource:        ProcIVkResourceMapResource,
-    unmapResource:      ProcIVkResourceUnmapResource,
-    flush:              ProcIVkResourceFlush,
-    invalidate:         ProcIVkResourceInvalidate,
+    getVmaAllocationInfo:   ProcIVkResourceGetVmaAllocationInfo,
+    getVmaAllocation:       ProcIVkResourceGetVmaAllocation,
+    mapResource:            ProcIVkResourceMapResource,
+    unmapResource:          ProcIVkResourceUnmapResource,
+    flush:                  ProcIVkResourceFlush,
+    invalidate:             ProcIVkResourceInvalidate,
+
+    isSharedConcurrent:     ProcIVkResourceIsSharedConcurrent,
+    getLastStageFlags:      ProcIVkResourceGetLastStageFlags,
+    setLastStageFlags:      ProcIVkResourceSetLastStageFlags,
+    getLastAccessMask:      ProcIVkResourceGetLastAccessMask,
+    setLastAccessMask:      ProcIVkResourceSetLastAccessMask,
+    getLastQueueOwnership:  ProcIVkResourceGetLastQueueOwnership,
+    setLastQueueOwnership:  ProcIVkResourceSetLastQueueOwnership,
 }
 
 /* IVkBuffer (701057d1-4a04-4ea0-9fcb-e5a516b27586) */
@@ -462,22 +497,21 @@ ProcIVkRendererLoadVulkanLoader         :: #type proc "c" (this: ^IVkRenderer, l
 ProcIVkRendererLoadVulkanLoaderUTF32    :: #type proc "c" (this: ^IVkRenderer, len: u32, path: [^]rune) -> b32
 ProcIVkRendererSetDriverPreferenceOdin  :: #type proc "c" (this: ^IVkRenderer, driver: string)
 ProcIVkRendererSetDriverPreference      :: #type proc "c" (this: ^IVkRenderer, len: u32, driver: cstring)
-ProcIVkRendererSetAllocator             :: #type proc "c" (this: ^IVkRenderer, allocator: ^vk.AllocationCallbacks)
+ProcIVkRendererSetAllocator             :: #type proc "c" (this: ^IVkRenderer, #by_ptr allocator: vk.AllocationCallbacks)
 
 ProcIVkRendererCreateFencePool          :: #type proc "c" (this: ^IVkRenderer) -> ^IVkFencePool
 ProcIVkRendererCreateSemaphorePool      :: #type proc "c" (this: ^IVkRenderer) -> ^IVkSemaphorePool
-ProcIVkRendererCreateCommandPool        :: #type proc "c" (this: ^IVkRenderer, fencePool: ^FencePool, queue: ^Queue) -> ^IVkCommandPool
-ProcIVkRendererCreateResourcePool       :: #type proc "c" (this: ^IVkRenderer, createInfo: ^vma.Pool_Create_Info) -> ^IVkResourcePool
+ProcIVkRendererCreateResourcePool       :: #type proc "c" (this: ^IVkRenderer, #by_ptr createInfo: vma.Pool_Create_Info) -> ^IVkResourcePool
 
 ProcIVkRendererGetDefaultFencePool      :: #type proc "c" (this: ^IVkRenderer) -> ^IVkFencePool
 ProcIVkRendererGetDefaultSemaphorePool  :: #type proc "c" (this: ^IVkRenderer) -> ^IVkSemaphorePool
-ProcIVkRendererGetDefaultCommandPool    :: #type proc "c" (this: ^IVkRenderer, queueType: QueueType) -> ^IVkCommandPool
 ProcIVkRendererGetDefaultResourcePool   :: #type proc "c" (this: ^IVkRenderer) -> ^IVkResourcePool
 ProcIVkRendererGetHLSLShaderCompiler    :: #type proc "c" (this: ^IVkRenderer) -> ^IVkShaderCompiler
 
 ProcIVkRendererGetAllocator             :: #type proc "c" (this: ^IVkRenderer) -> ^vk.AllocationCallbacks
-ProcIVkRendererGetInstance              :: #type proc "c" (this: ^IVkRenderer) -> ^Instance
-ProcIVkRendererGetDevice                :: #type proc "c" (this: ^IVkRenderer) -> ^Device
+ProcIVkRendererGetInstance              :: #type proc "c" (this: ^IVkRenderer) -> ^IVkInstance
+ProcIVkRendererGetDevice                :: #type proc "c" (this: ^IVkRenderer) -> ^IVkDevice
+ProcIVkRendererGetQueue                 :: #type proc "c" (this: ^IVkRenderer, queueType: QueueType) -> ^IVkQueue
 
 IVkRenderer_IID :: kom.IID {
     0x08, 0x13, 0x15, 0x08,

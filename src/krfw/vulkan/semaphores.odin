@@ -1,3 +1,12 @@
+#+private
+package krfw_vulkan
+
+import "base:runtime"
+
+import vk "vendor:vulkan"
+
+import "../kom"
+
 /* SemaphorePool implementation */
 SemaphorePool_destroy :: proc "c" (this: ^SemaphorePool) {
     if this == nil || this._renderer == nil {

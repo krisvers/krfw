@@ -199,5 +199,5 @@ _createSurface :: proc "c" (this: ^VkRenderer, window: ^krfw.Window) -> vk.Surfa
 }
 
 getBaseFromInterface :: proc(interface: ^kom.IBase, $T: typeid) -> ^T {
-    return (^T)(mem.ptr_offset(interface, size_of(rawptr)))
+    return mem.ptr_offset(([^]^T)(interface), -1)^
 }

@@ -102,47 +102,47 @@ VkRendererData :: struct {
 
     /* pre-init, destroyed at the end of init */
     _areWindowsQueued:  bool,
-    _queuedWindows:     [dynamic]VulkanQueuedWindowData,
+    _queuedWindows:     [dynamic]VkQueuedWindowData,
 
     /* init members */
     _headless:          bool,
     _debug:             bool,
-    _instance:          Instance,
-    _device:            Device,
+    _instance:          ^VkInstance,
+    _device:            ^VkDevice,
     _vma:               vma.Allocator,
-    _backbufferPools:   map[krfw.Window]BackbufferPool,
+    _backbufferPools:   map[krfw.Window]^VkBackbufferPool,
 
     /* note: queues may be aliases of one another */
-    _queues:    []Queue,
+    _queues:    []^VkQueue,
 
-    _generalQueue:  ^Queue,
-    _presentQueue:  ^Queue,
-    _graphicsQueue: ^Queue,
-    _transferQueue: ^Queue,
-    _computeQueue:  ^Queue,
+    _generalQueue:  ^VkQueue,
+    _presentQueue:  ^VkQueue,
+    _graphicsQueue: ^VkQueue,
+    _transferQueue: ^VkQueue,
+    _computeQueue:  ^VkQueue,
 
     /* pools */
-    _defaultFencePool:      FencePool,
-    _defaultSemaphorePool:  SemaphorePool,
-    _defaultResourcePool:   ResourcePool,
+    _defaultFencePool:      ^VkFencePool,
+    _defaultSemaphorePool:  ^VkSemaphorePool,
+    _defaultResourcePool:   ^VkResourcePool,
 
     /* other state */
     _performingDestruction: b32,
 }
 
 VkRendererIBase :: struct {
-    interface:  kom.IBase,
     base:       ^VkRenderer,
+    interface:  kom.IBase,
 }
 
 VkRendererIRenderer :: struct {
-    interface:  IRenderer,
     base:       ^VkRenderer,
+    interface:  IRenderer,
 }
 
 VkRendererIVkRenderer :: struct {
-    interface:  IVkRenderer,
     base:       ^VkRenderer,
+    interface:  IVkRenderer,
 }
 
 VkRenderer :: struct {
